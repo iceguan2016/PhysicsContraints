@@ -152,7 +152,7 @@ struct FJointSlovePair
 	struct FRigidSloverData
 	{
 		bool bStatic = false;
-		Chaos::FReal InvM = 1.0f;
+		Chaos::FReal InvM = 0.0f;
 		Chaos::FMatrix33 InvLocalInertiaTensor = FMatrix::Identity;
 
 		// Local-space constraint settings
@@ -189,6 +189,8 @@ struct FJointSlovePair
 	Chaos::FVec3 ConstraintHardIM; // K = JM^-1J^T with constraint axis
 	Chaos::FVec3 ConstraintSoftIM;
 	Chaos::FVec3 ConstraintCX = Chaos::FVec3::ZeroVector;
+	Chaos::FVec3 SolveVelocityDeltaLambda = Chaos::FVec3::ZeroVector;
+	Chaos::FVec3 SolvePositionDeltaLambda = Chaos::FVec3::ZeroVector;
 
 	bool NeedsSolve[3];
 
@@ -214,6 +216,11 @@ public:
 
 	UPROPERTY(EditAnywhere, Category=Joint)
 	FJointSettings JointSettings;
+
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSolvePosition = false;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSolveVelocity = true;
 
 protected:
 	void InitVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair);
