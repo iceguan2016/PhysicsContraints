@@ -195,8 +195,6 @@ struct FJointSlovePair
 	Chaos::FVec3 SolveVelocityDeltaLambda = Chaos::FVec3::ZeroVector;
 	Chaos::FVec3 SolvePositionDeltaLambda = Chaos::FVec3::ZeroVector;
 
-	bool NeedsSolve[3];
-
 	Chaos::FReal TotalLambda = 0;
 
 	FSpringPart SpingPart;
@@ -227,7 +225,7 @@ public:
 
 protected:
 	void WarmStart();
-	void InitVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair);
+	void InitVelocityConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
 
 
 	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
@@ -237,7 +235,7 @@ protected:
 		FJointSlovePair& InJointSloverPair);
 
 
-	void SolveVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair);
+	void SolveVelocityConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
 
 	void InitPlanarPositionConstraint(
 		float Dt, 

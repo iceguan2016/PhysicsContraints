@@ -54,12 +54,13 @@ void ASoftJointConstraintTestActor::AddJointPair(
 		
 		constexpr Chaos::FReal Density = 0.001; // kg/cm^3
 
+		b.LocalConnectorX = InJointWorldTrans.GetRelativeTransform(BodyTransform);
+		b.LocalConnectorX.SetLocation(CMtoM(b.LocalConnectorX.GetLocation()));
+
 		if(!b.bStatic)
 		{
 			Chaos::FReal Mass = (Extent.X * Extent.Y * Extent.Z) * Density;
 			//Chaos::FReal Mass = 3375;
-			b.LocalConnectorX = InJointWorldTrans.GetRelativeTransform(BodyTransform);
-			b.LocalConnectorX.SetLocation(CMtoM(b.LocalConnectorX.GetLocation()));
 			Chaos::FMatrix33 I = FMatrix::Identity;
 			I.M[0][0] = 1.0 / 12 * Mass * (FMath::Square(Extent.Y) + FMath::Square(Extent.Z));
 			I.M[1][1] = 1.0 / 12 * Mass * (FMath::Square(Extent.X) + FMath::Square(Extent.Z));
@@ -150,7 +151,7 @@ void ASoftJointConstraintTestActor::Simulate(float Dt)
 			}
 
 			// Init
-			InitVelocityConstraints(Dt, JointPair);
+			InitVelocityConstraints(Dt, ConstraintIndex, JointPair);
 		}
 	}
 
@@ -203,7 +204,7 @@ void ASoftJointConstraintTestActor::Simulate(float Dt)
 				auto& b0 = JointPair.Body[0];
 				auto& b1 = JointPair.Body[1];
 
-				SolveVelocityConstraints(Dt, JointPair);
+				SolveVelocityConstraints(Dt, ConstraintIndex, JointPair);
 			}
 		}
 	}
@@ -246,9 +247,9 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 			auto DebugDrawBody = [&World](const FJointSlovePair::FRigidSloverData& b, const FColor& c) {
 				auto p0 = MtoCM(b.P);
 				auto p1 = MtoCM(b.P + b.ConstraintArm);
-				DrawDebugLine(World, p0, p1, c, false, -1, 0, 1.0f);
+				//DrawDebugLine(World, p0, p1, c, false, -1, 0, 1.0f);
 
-				DrawDebugBox(World, MtoCM(b.ConnectorX), FVector{2.0, 2.0f, 2.0f}, FQuat::Identity, c, false, -1, 0, 1.0f);
+				//DrawDebugBox(World, MtoCM(b.ConnectorX), FVector{2.0, 2.0f, 2.0f}, FQuat::Identity, c, false, -1, 0, 1.0f);
 			};
 
 			FColor Color0 = FColor::Red;
@@ -268,11 +269,17 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 				const Chaos::FVec3 dV1dt = b1.InvM * dp;
 				DrawDebugLine(World, MtoCM(b1.ConnectorX), MtoCM(b1.ConnectorX + dV1dt), Color1, false, -1, 0, 1.0f);
 			}
+
+			DrawDebugLine(World, MtoCM(b0.ConnectorX), MtoCM(b1.ConnectorX), FColor::Blue, false, -1, 0, 1.0f);
+
+			auto P = MtoCM((b0.ConnectorX + b1.ConnectorX) * 0.5f);
+			auto Dist = JointPair.ConstraintCX[ConstraintIndex];
+			DrawDebugString(World, P, FString::Printf(TEXT("Dist:%.3fcm"), Dist), nullptr, FColor::Red, 0, false, 1.5f);
 		}
 	}
 }
 
-void ASoftJointConstraintTestActor::InitVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair)
+void ASoftJointConstraintTestActor::InitVelocityConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair)
 {
 	auto& b0 = InJointSloverPair.Body[0];
 	auto& b1 = InJointSloverPair.Body[1];
@@ -291,7 +298,6 @@ void ASoftJointConstraintTestActor::InitVelocityConstraints(float Dt, FJointSlov
 	b1.DQ = Chaos::FVec3::ZeroVector;
 
 	InJointSloverPair.TotalLambda = 0;
-	InJointSloverPair.NeedsSolve[0] = InJointSloverPair.NeedsSolve[1] = InJointSloverPair.NeedsSolve[2] = false;
 
 	auto CalcuteInvI = [](FJointSlovePair::FRigidSloverData& b) {
 		auto M = b.R.ToMatrix();
@@ -302,26 +308,21 @@ void ASoftJointConstraintTestActor::InitVelocityConstraints(float Dt, FJointSlov
 	CalcuteInvI(InJointSloverPair.Body[0]);
 	CalcuteInvI(InJointSloverPair.Body[1]);
 
-	int32 ConstraintIndex = JointSettings.GetConstraintIndex();
-
 	if(ConstraintIndex != INDEX_NONE)
 	{
 		InitPlanarPositionConstraint(Dt, InJointSloverPair, ConstraintIndex);
 
-		if(InJointSloverPair.NeedsSolve[ConstraintIndex])
-		{
-			float EffectiveMass = 0;
-			auto K = InJointSloverPair.ConstraintHardIM[ConstraintIndex];
-			InJointSloverPair.SpingPart.CalculateSpringProperties(
-				Dt,
-				K,
-				1.0f,
-				InJointSloverPair.ConstraintCX[ConstraintIndex],
-				JointSettings.Frequency,
-				JointSettings.DampingRatio,
-				EffectiveMass);
-			InJointSloverPair.ConstraintSoftIM[ConstraintIndex] = 1.0 / EffectiveMass;
-		}
+		float EffectiveMass = 0;
+		auto K = InJointSloverPair.ConstraintHardIM[ConstraintIndex];
+		InJointSloverPair.SpingPart.CalculateSpringProperties(
+			Dt,
+			K,
+			1.0f,
+			InJointSloverPair.ConstraintCX[ConstraintIndex],
+			JointSettings.Frequency,
+			JointSettings.DampingRatio,
+			EffectiveMass);
+		InJointSloverPair.ConstraintSoftIM[ConstraintIndex] = 1.0 / EffectiveMass;
 	}
 }
 
@@ -443,13 +444,11 @@ void ASoftJointConstraintTestActor::SolvePositionConstraints(float Dt,
 	}
 }
 
-void ASoftJointConstraintTestActor::SolveVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair)
+void ASoftJointConstraintTestActor::SolveVelocityConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair)
 {
 	if(!bSolveVelocity) return;
 
-	int32 ConstraintIndex = JointSettings.GetConstraintIndex();
-
-	if(ConstraintIndex != INDEX_NONE && InJointSloverPair.NeedsSolve[ConstraintIndex])
+	if(ConstraintIndex != INDEX_NONE)
 	{
 		auto& b0 = InJointSloverPair.Body[0];
 		auto& b1 = InJointSloverPair.Body[1];
