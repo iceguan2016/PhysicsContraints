@@ -3,15 +3,17 @@
 
 Chaos::FVec3 CMtoM(const Chaos::FVec3& InVec)
 {
-	return InVec * 0.01;
+	//return InVec * 0.01;
+	return InVec;
 }
 
 Chaos::FVec3 MtoCM(const Chaos::FVec3& InVec)
 {
-	return InVec * 100;
+	//return InVec * 100;
+	return InVec;
 }
 
-const Chaos::FVec3 Gravity{ 0, 0, -9.80 };
+const Chaos::FVec3 Gravity{ 0, 0, -980 };
 
 int32 FJointSettings::GetConstraintIndex() const
 {
@@ -24,10 +26,11 @@ int32 FJointSettings::GetConstraintIndex() const
 	{
 		ConstraintIndex = 1;
 	}
-	else if (LimitDistance[2] > 0.01f)
+	else
 	{
 		ConstraintIndex = 2;
 	}
+
 	return ConstraintIndex;
 }
 
@@ -45,9 +48,11 @@ void ASoftJointConstraintTestActor::AddJointPair(
 
 	auto InitBody = [&InJointWorldTrans](FJointSlovePair::FRigidSloverData& b, class UBoxComponent* shape) {
 		auto BodyTransform = shape->GetComponentTransform();
-		auto Extent = CMtoM(shape->GetScaledBoxExtent());
+		// GetScaledBoxExtent return Half Extent
+		auto Extent = CMtoM(shape->GetScaledBoxExtent() * 2.0);
+		//auto Extent = FVector{ 1.5, 1.5, 1.5f };
 		
-		constexpr Chaos::FReal Density = 1000; // kg/m^3
+		constexpr Chaos::FReal Density = 0.001; // kg/cm^3
 
 		if(!b.bStatic)
 		{
@@ -90,67 +95,136 @@ void ASoftJointConstraintTestActor::Simulate(float Dt)
 	int32 ConstraintIndex = JointSettings.GetConstraintIndex();
 	if(ConstraintIndex == INDEX_NONE) return;
 
-	for(int32 i=0; i<JointPairs.Num(); ++i)
+	constexpr int32 NumPositionIterations = 8;
+	constexpr int32 NumVelocityIterations = 1;
+
+	// Integrate
 	{
-		auto& JointPair = JointPairs[i];
 
-		auto& b0 = JointPair.Body[0];
-		auto& b1 = JointPair.Body[1];
-
-		// Integrate Velocity
+		for (int32 i = 0; i < JointPairs.Num(); ++i)
 		{
-			if(!b0.bStatic)
+			auto& JointPair = JointPairs[i];
+
+			auto& b0 = JointPair.Body[0];
+			auto& b1 = JointPair.Body[1];
+
+
+			// Integrate Velocity
 			{
-				b0.V += Dt * Gravity;
+				if (!b0.bStatic)
+				{
+					b0.V += Dt * Gravity;
+				}
+
+				if (!b1.bStatic)
+				{
+					b1.V += Dt * Gravity;
+				}
 			}
 
-			if(!b1.bStatic)
-			{
-				b1.V += Dt * Gravity;
-			}
-		}
-
-		InitVelocityConstraints(Dt, JointPair);
-
-		SolveVelocityConstraints(Dt, JointPair);
-
-		auto IntegratePosition = [Dt](FJointSlovePair::FRigidSloverData& InBody) {
-			InBody.P += Dt * InBody.V;
+			auto IntegratePosition = [Dt](FJointSlovePair::FRigidSloverData& InBody) {
+				InBody.P += Dt * InBody.V;
 
 #if 0
-			Chaos::FRotation3 aux_q = FQuat{ InBody.W.X, InBody.W.Y, InBody.W.Z, 0.0 };
-			Chaos::FRotation3 q0 = aux_q * InBody.R;
+				Chaos::FRotation3 aux_q = FQuat{ InBody.W.X, InBody.W.Y, InBody.W.Z, 0.0 };
+				Chaos::FRotation3 q0 = aux_q * InBody.R;
 
-			Chaos::FRotation3 q = InBody.R;
-			q.X += 0.5 * q0.X;
-			q.Y += 0.5 * q0.Y;
-			q.Z += 0.5 * q0.Z;
-			q.W += 0.5 * q0.W;
+				Chaos::FRotation3 q = InBody.R;
+				q.X += 0.5 * q0.X;
+				q.Y += 0.5 * q0.Y;
+				q.Z += 0.5 * q0.Z;
+				q.W += 0.5 * q0.W;
 
-			q.Normalize();
-			InBody.R = q;
+				q.Normalize();
+				InBody.R = q;
 #else
-			InBody.IntegrateRotation(InBody.W * Dt);
+				InBody.IntegrateRotation(InBody.W * Dt);
 #endif
-		};
-
-
-		// Integrate Position
-		{
-			if (!b0.bStatic) IntegratePosition(b0);
-			if (!b1.bStatic) IntegratePosition(b1); 
-		}
-
-		SolvePositionConstraints(Dt, JointPair);
-
-		// Update shape transform
-		{
-			auto SetShapeTransform = [](const FJointSlovePair::FRigidSloverData& b, UBoxComponent* shape) {
-				shape->SetWorldLocationAndRotation(MtoCM(b.P), b.R);
 			};
 
-			if (!b0.bStatic) SetShapeTransform(b0, JointPair.ShapeA);
-			if (!b1.bStatic) SetShapeTransform(b1, JointPair.ShapeB);
+
+			// Integrate Position
+			{
+				if (!b0.bStatic) IntegratePosition(b0);
+				if (!b1.bStatic) IntegratePosition(b1);
+			}
+
+			// Init
+			InitVelocityConstraints(Dt, JointPair);
+		}
+	}
+
+	// Solve position
+	{
+		for(int32 Itr=0; Itr<NumPositionIterations; ++Itr)
+		{
+			for (int32 i = 0; i < JointPairs.Num(); ++i)
+			{
+				auto& JointPair = JointPairs[i];
+
+				auto& b0 = JointPair.Body[0];
+				auto& b1 = JointPair.Body[1];
+
+				ApplyAxisPositionConstraint(Dt, ConstraintIndex, JointPair);
+			}
+		}
+
+		auto SetImplicitVelocity = [](FJointSlovePair::FRigidSloverData& InSolveData, Chaos::FReal Dt)
+		{
+			if (!InSolveData.bStatic && (Dt != Chaos::FReal(0)))
+			{
+				const Chaos::FReal InvDt = Chaos::FReal(1) / Chaos::FReal(Dt);
+				InSolveData.V = InSolveData.V + InSolveData.DP * InvDt;
+				InSolveData.W = InSolveData.W + InSolveData.DQ * InvDt;
+			}
+		};
+
+		// SetImplicitVelocity
+		for (int32 i = 0; i < JointPairs.Num(); ++i)
+		{
+			auto& JointPair = JointPairs[i];
+
+			auto& b0 = JointPair.Body[0];
+			auto& b1 = JointPair.Body[1];
+
+			SetImplicitVelocity(b0, Dt);
+			SetImplicitVelocity(b1, Dt);
+		}
+	}
+
+	// Solve velocity
+	{
+		for (int32 Itr = 0; Itr < NumPositionIterations; ++Itr)
+		{
+			for (int32 i = 0; i < JointPairs.Num(); ++i)
+			{
+				auto& JointPair = JointPairs[i];
+
+				auto& b0 = JointPair.Body[0];
+				auto& b1 = JointPair.Body[1];
+
+				SolveVelocityConstraints(Dt, JointPair);
+			}
+		}
+	}
+
+	// Update shape transform
+	{
+		for (int32 i = 0; i < JointPairs.Num(); ++i)
+		{
+			auto& JointPair = JointPairs[i];
+
+			auto& b0 = JointPair.Body[0];
+			auto& b1 = JointPair.Body[1];
+
+			{
+				auto SetShapeTransform = [](const FJointSlovePair::FRigidSloverData& b, UBoxComponent* shape) {
+					shape->SetWorldLocationAndRotation(MtoCM(b.P), b.R);
+				};
+
+				if (!b0.bStatic) SetShapeTransform(b0, JointPair.ShapeA);
+				if (!b1.bStatic) SetShapeTransform(b1, JointPair.ShapeB);
+			}
 		}
 	}
 }
@@ -200,15 +274,21 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 
 void ASoftJointConstraintTestActor::InitVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair)
 {
+	auto& b0 = InJointSloverPair.Body[0];
+	auto& b1 = InJointSloverPair.Body[1];
+
 	// Position
-	InJointSloverPair.Body[0].ConnectorX = InJointSloverPair.Body[0].P
-		+ InJointSloverPair.Body[0].R.RotateVector(InJointSloverPair.Body[0].LocalConnectorX.GetLocation());
-	InJointSloverPair.Body[1].ConnectorX = InJointSloverPair.Body[1].P
-		+ InJointSloverPair.Body[1].R.RotateVector(InJointSloverPair.Body[1].LocalConnectorX.GetLocation());
+	b0.ConnectorX = b0.P + b0.R.RotateVector(b0.LocalConnectorX.GetLocation());
+	b1.ConnectorX = b1.P + b1.R.RotateVector(b1.LocalConnectorX.GetLocation());
 	// Rotation
-	InJointSloverPair.Body[0].ConnectorR = InJointSloverPair.Body[0].R * InJointSloverPair.Body[0].LocalConnectorX.GetRotation();
-	InJointSloverPair.Body[1].ConnectorR = InJointSloverPair.Body[1].R * InJointSloverPair.Body[1].LocalConnectorX.GetRotation();
+	b0.ConnectorR = b0.R * b0.LocalConnectorX.GetRotation();
+	b1.ConnectorR = b1.R * b1.LocalConnectorX.GetRotation();
 	// 
+
+	b0.DP = Chaos::FVec3::ZeroVector;
+	b1.DP = Chaos::FVec3::ZeroVector;
+	b0.DQ = Chaos::FVec3::ZeroVector;
+	b1.DQ = Chaos::FVec3::ZeroVector;
 
 	InJointSloverPair.TotalLambda = 0;
 	InJointSloverPair.NeedsSolve[0] = InJointSloverPair.NeedsSolve[1] = InJointSloverPair.NeedsSolve[2] = false;
@@ -245,6 +325,38 @@ void ASoftJointConstraintTestActor::InitVelocityConstraints(float Dt, FJointSlov
 	}
 }
 
+void ASoftJointConstraintTestActor::ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair)
+{
+	if (ConstraintIndex == INDEX_NONE) 
+	{
+		return;
+	}
+
+	auto& b0 = InJointSloverPair.Body[0];
+	auto& b1 = InJointSloverPair.Body[1];
+
+	const Chaos::FVec3 CX = b1.DP - b0.DP + Chaos::FVec3::CrossProduct(b1.DQ, b1.ConstraintArm) - Chaos::FVec3::CrossProduct(b0.DQ, b0.ConstraintArm);
+
+	Chaos::FReal DeltaPosition = InJointSloverPair.ConstraintCX[ConstraintIndex] + Chaos::FVec3::DotProduct(CX, InJointSloverPair.ConstraintAxis[ConstraintIndex]);
+
+	bool NeedsSolve = false;
+	if (DeltaPosition > InJointSloverPair.ConstraintLimits[ConstraintIndex])
+	{
+		DeltaPosition -= InJointSloverPair.ConstraintLimits[ConstraintIndex];
+		NeedsSolve = true;
+	}
+	else if (DeltaPosition < -InJointSloverPair.ConstraintLimits[ConstraintIndex])
+	{
+		DeltaPosition += InJointSloverPair.ConstraintLimits[ConstraintIndex];
+		NeedsSolve = true;
+	}
+
+	if(NeedsSolve)
+	{
+		SolvePositionConstraints(Dt, ConstraintIndex, DeltaPosition, InJointSloverPair);
+	}
+}
+
 void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJointSlovePair& InJointSloverPair, const int32 AxisIndex)
 {
 	const auto& bX0 = InJointSloverPair.Body[0].P;
@@ -265,29 +377,11 @@ void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJoin
 	// r1 = cX1 - bX1
 	const Chaos::FVec3 ConstraintArm1 = cX1 - bX1;
 
-	InJointSloverPair.ConstraintLimits[AxisIndex] = Delta;
+	InJointSloverPair.ConstraintLimits[AxisIndex] = JointSettings.LimitDistance[AxisIndex];
 	InJointSloverPair.ConstraintAxis[AxisIndex] = Axis;
 
 	auto CX = (cX1 - cX0).Dot(Axis);
-	Chaos::FReal DeltaPosition = CX;
-
-	bool NeedsSolve = false;
-	if (JointSettings.LimitDistance[AxisIndex])
-	{
-		if (DeltaPosition > JointSettings.LimitDistance[AxisIndex])
-		{
-			DeltaPosition -= JointSettings.LimitDistance[AxisIndex];
-			NeedsSolve = true;
-		}
-		else if (DeltaPosition < -JointSettings.LimitDistance[AxisIndex])
-		{
-			DeltaPosition += JointSettings.LimitDistance[AxisIndex];
-			NeedsSolve = true;
-		}
-	}
-
-	InJointSloverPair.NeedsSolve[AxisIndex] = NeedsSolve;
-	InJointSloverPair.ConstraintCX[AxisIndex] = DeltaPosition;
+	InJointSloverPair.ConstraintCX[AxisIndex] = CX;
 
 	InJointSloverPair.Body[0].ConstraintArm = ConstraintArm0;
 	InJointSloverPair.Body[1].ConstraintArm = ConstraintArm1;
@@ -306,18 +400,17 @@ void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJoin
 }
 
 
-void ASoftJointConstraintTestActor::SolvePositionConstraints(float Dt, FJointSlovePair& InJointSloverPair)
+void ASoftJointConstraintTestActor::SolvePositionConstraints(float Dt,
+	int32 ConstraintIndex, const Chaos::FReal DeltaPosition, FJointSlovePair& InJointSloverPair)
 {
 	if(!bSolvePosition) return;
 
-	int32 ConstraintIndex = JointSettings.GetConstraintIndex();
-
-	if (ConstraintIndex != INDEX_NONE && InJointSloverPair.NeedsSolve[ConstraintIndex])
+	if (ConstraintIndex != INDEX_NONE)
 	{
 		auto& b0 = InJointSloverPair.Body[0];
 		auto& b1 = InJointSloverPair.Body[1];
 
-		auto C = InJointSloverPair.ConstraintCX[ConstraintIndex];
+		auto C = DeltaPosition;
 		auto effective_mass = 1.0 / InJointSloverPair.ConstraintHardIM[ConstraintIndex];
 		auto delta_lambda = -effective_mass * C;
 
@@ -330,16 +423,22 @@ void ASoftJointConstraintTestActor::SolvePositionConstraints(float Dt, FJointSlo
 			const Chaos::FVec3 dV0dt = b0.InvM * dp;
 			const Chaos::FVec3 dW0dt = b0.InvI * (b0.ConstraintArm.Cross(dp));
 
-			b0.P -= dV0dt;
-			b0.IntegrateRotation(-dW0dt);
+			b0.DP -= dV0dt;
+			b0.DQ -= dW0dt;
+			
+			//b0.P -= dV0dt;
+			//b0.IntegrateRotation(-dW0dt);
 		}
 		if (!b1.bStatic)
 		{
 			const Chaos::FVec3 dV1dt = b1.InvM * dp;
 			const Chaos::FVec3 dW1dt = b1.InvI * (b1.ConstraintArm.Cross(dp));
 
-			b1.P += dV1dt;
-			b1.IntegrateRotation(dW1dt);
+			b1.DP += dV1dt;
+			b1.DQ += dW1dt;
+
+			//b1.P += dV1dt;
+			//b1.IntegrateRotation(dW1dt);
 		}
 	}
 }

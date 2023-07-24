@@ -169,6 +169,9 @@ struct FJointSlovePair
 		Chaos::FVec3		V = Chaos::FVec3::ZeroVector;
 		Chaos::FVec3		W = Chaos::FVec3::ZeroVector;
 
+		Chaos::FVec3		DP = Chaos::FVec3::ZeroVector;
+		Chaos::FVec3		DQ = Chaos::FVec3::ZeroVector;
+
 		Chaos::FVec3 ConstraintArm; // World-space constraint arm
 
 		void IntegrateRotation(const Chaos::FVec3 dTheta)
@@ -223,8 +226,17 @@ public:
 	bool bSolveVelocity = true;
 
 protected:
+	void WarmStart();
 	void InitVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair);
-	void SolvePositionConstraints(float Dt, FJointSlovePair& InJointSloverPair);
+
+
+	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
+	void SolvePositionConstraints(float Dt, 
+		int32 ConstraintIndex,
+		const Chaos::FReal DeltaPosition, 
+		FJointSlovePair& InJointSloverPair);
+
+
 	void SolveVelocityConstraints(float Dt, FJointSlovePair& InJointSloverPair);
 
 	void InitPlanarPositionConstraint(
