@@ -195,7 +195,7 @@ struct FJointSlovePair
 	Chaos::FVec3 SolveVelocityDeltaLambda = Chaos::FVec3::ZeroVector;
 	Chaos::FVec3 SolvePositionDeltaLambda = Chaos::FVec3::ZeroVector;
 
-	Chaos::FReal TotalLambda = 0;
+	Chaos::FReal ConstraintLambda[3] = {0};
 
 	FSpringPart SpingPart;
 };
@@ -219,13 +219,16 @@ public:
 	FJointSettings JointSettings;
 
 	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSoftConstraint = false;
+	UPROPERTY(EditAnywhere, Category = Joint)
 	bool bSolvePosition = false;
 	UPROPERTY(EditAnywhere, Category = Joint)
 	bool bSolveVelocity = true;
 
 protected:
-	void WarmStart();
-	void InitVelocityConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
+	void AdvanceOneStep(float Dt);
+
+	void InitPositionConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
 
 
 	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
@@ -233,9 +236,19 @@ protected:
 		int32 ConstraintIndex,
 		const Chaos::FReal DeltaPosition, 
 		FJointSlovePair& InJointSloverPair);
+	void SolvePositionConstraintsSoft(float Dt,
+		int32 ConstraintIndex,
+		const Chaos::FReal DeltaPosition,
+		FJointSlovePair& InJointSloverPair);
 
-
-	void SolveVelocityConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
+	void ApplyAxisVelocityConstraint(float Dt,
+		int32 ConstraintIndex,
+		FJointSlovePair& InJointSloverPair);
+	void SolveLinearVelocityConstraints(float Dt, 
+		int32 ConstraintIndex, 
+		FJointSlovePair& InJointSloverPair,
+		const Chaos::FReal TargetVel);
+	void SolveVelocityConstraintsSoft(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
 
 	void InitPlanarPositionConstraint(
 		float Dt, 
