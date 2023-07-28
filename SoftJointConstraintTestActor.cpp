@@ -402,20 +402,23 @@ void ASoftJointConstraintTestActor::ApplyAxisPositionConstraint(float Dt, int32 
 
 void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJointSlovePair& InJointSloverPair, const int32 AxisIndex)
 {
-	const auto& bX0 = InJointSloverPair.Body[0].P;
-	const auto& cR0 = InJointSloverPair.Body[0].ConnectorR;
-	const auto& cX0 = InJointSloverPair.Body[0].ConnectorX;
+	auto& b0 = InJointSloverPair.Body[0];
+	auto& b1 = InJointSloverPair.Body[1];
 
-	const auto& bX1 = InJointSloverPair.Body[1].P;
-	const auto& cR1 = InJointSloverPair.Body[1].ConnectorR;
-	const auto& cX1 = InJointSloverPair.Body[1].ConnectorX;
+	const auto& bX0 = b0.P;
+	const auto& cR0 = b0.ConnectorR;
+	const auto& cX0 = b0.ConnectorX;
+
+	const auto& bX1 = b1.P;
+	const auto& cR1 = b1.ConnectorR;
+	const auto& cX1 = b1.ConnectorX;
 
 	const Chaos::FMatrix33 R0M = cR0.ToMatrix();
 	Chaos::FVec3 Axis = R0M.GetAxis(AxisIndex);
 	Chaos::FReal Delta = Chaos::FVec3::DotProduct(cX1 - cX0, Axis);
 
 	// Calculate points relative to body, "Constraints Derivation for Rigid Body Simulation in 3D. equation 55" 
-	// r0 + u = (cX0 - bX1) + (cX1 - cX0) = cX1 - bX1
+	// r0 + u = (cX0 - bX1) + (cX1 - cX0) = cX1 - bX0
 	const Chaos::FVec3 ConstraintArm0 = cX1 - bX0;
 	// r1 = cX1 - bX1
 	const Chaos::FVec3 ConstraintArm1 = cX1 - bX1;
@@ -426,11 +429,16 @@ void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJoin
 	auto CX = (cX1 - cX0).Dot(Axis);
 	InJointSloverPair.ConstraintCX[AxisIndex] = CX;
 
-	InJointSloverPair.Body[0].ConstraintArm = ConstraintArm0;
-	InJointSloverPair.Body[1].ConstraintArm = ConstraintArm1;
+	b0.ConstraintArm = ConstraintArm0;
+	b1.ConstraintArm = ConstraintArm1;
 
 	//【金山文档】 Github PositionBasedDynamics源码分析 Section: Constraint mass matrix
-	// https://kdocs.cn/l/chHP9pOUPhv3
+
+	// vector are column major
+	// II = (rxn)^T * InvI * (rxn)
+	// K = J^T * InvM * J = m0^-1 + II0 + m1^-1 + II1
+
+	// 1. calculate 'rxn'
 	const Chaos::FVec3 AngularAxis0 = ConstraintArm0.Cross(Axis);
 	const Chaos::FVec3 AngularAxis1 = ConstraintArm1.Cross(Axis);
 #if 0
@@ -439,8 +447,10 @@ void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJoin
 	const Chaos::FVec3 IA1 = InJointSloverPair.Body[1].InvI.TransformVector(AngularAxis1);
 	const Chaos::FReal II1 = IA1.Dot(AngularAxis1);
 #else
-	const Chaos::FVec3 IA0 = Chaos::Utilities::Multiply(InJointSloverPair.Body[0].InvI, AngularAxis0);
-	const Chaos::FVec3 IA1 = Chaos::Utilities::Multiply(InJointSloverPair.Body[1].InvI, AngularAxis1);
+	// 2. calculate '(rxn)^T * InvI'
+	const Chaos::FVec3 IA0 = Chaos::Utilities::Multiply(b0.InvI, AngularAxis0);
+	const Chaos::FVec3 IA1 = Chaos::Utilities::Multiply(b1.InvI, AngularAxis1);
+	// 3. calculate '(rxn)^T * InvI * (rxn)'
 	const Chaos::FReal II0 = Chaos::FVec3::DotProduct(AngularAxis0, IA0);
 	const Chaos::FReal II1 = Chaos::FVec3::DotProduct(AngularAxis1, IA1);
 #endif
