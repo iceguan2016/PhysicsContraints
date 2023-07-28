@@ -255,6 +255,8 @@ protected:
 		FJointSlovePair& InJointSloverPair,
 		const int32 AxisIndex);
 
+	void ApplyCorrections(FJointSlovePair& InJointSloverPair);
+
 private:
 	UPROPERTY()
 	TArray<FJointSlovePair> JointPairs;

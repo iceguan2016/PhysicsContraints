@@ -250,6 +250,8 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 		{
 			auto& JointPair = JointPairs[i];
 
+			ApplyCorrections(JointPair);
+
 			auto& b0 = JointPair.Body[0];
 			auto& b1 = JointPair.Body[1];
 
@@ -437,27 +439,36 @@ void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJoin
 	// vector are column major
 	// II = (rxn)^T * InvI * (rxn)
 	// K = J^T * InvM * J = m0^-1 + II0 + m1^-1 + II1
-
 	// 1. calculate 'rxn'
 	const Chaos::FVec3 AngularAxis0 = ConstraintArm0.Cross(Axis);
 	const Chaos::FVec3 AngularAxis1 = ConstraintArm1.Cross(Axis);
-#if 0
-	const Chaos::FVec3 IA0 = InJointSloverPair.Body[0].InvI.TransformVector(AngularAxis0);
-	const Chaos::FReal II0 = IA0.Dot(AngularAxis0);
-	const Chaos::FVec3 IA1 = InJointSloverPair.Body[1].InvI.TransformVector(AngularAxis1);
-	const Chaos::FReal II1 = IA1.Dot(AngularAxis1);
-#else
-	// 2. calculate '(rxn)^T * InvI'
+
+	// 2. calculate 'InvI * (rxn)'
+	// const Chaos::FVec3 IA0 = InJointSloverPair.Body[0].InvI.TransformVector(AngularAxis0);
 	const Chaos::FVec3 IA0 = Chaos::Utilities::Multiply(b0.InvI, AngularAxis0);
+	// const Chaos::FVec3 IA1 = InJointSloverPair.Body[1].InvI.TransformVector(AngularAxis1);
 	const Chaos::FVec3 IA1 = Chaos::Utilities::Multiply(b1.InvI, AngularAxis1);
 	// 3. calculate '(rxn)^T * InvI * (rxn)'
 	const Chaos::FReal II0 = Chaos::FVec3::DotProduct(AngularAxis0, IA0);
 	const Chaos::FReal II1 = Chaos::FVec3::DotProduct(AngularAxis1, IA1);
-#endif
 
 	InJointSloverPair.ConstraintHardIM[AxisIndex] = InJointSloverPair.Body[0].InvM + II0 + InJointSloverPair.Body[1].InvM + II1;
 }
 
+
+void ASoftJointConstraintTestActor::ApplyCorrections(FJointSlovePair& InJointSloverPair)
+{
+	auto& b0 = InJointSloverPair.Body[0];
+	auto& b1 = InJointSloverPair.Body[1];
+
+	auto ApplyCorrection = [](FJointSlovePair::FRigidSloverData& b) {
+		b.P += b.DP;
+		b.R = !b.DQ.IsZero() ? Chaos::FRotation3::IntegrateRotationWithAngularVelocity(b.R, Chaos::FVec3(b.DQ), Chaos::FReal(1)) : b.R;
+	};
+
+	if (!b0.bStatic) ApplyCorrection(b0);
+	if (!b1.bStatic) ApplyCorrection(b1);
+}
 
 void ASoftJointConstraintTestActor::SolvePositionConstraints(float Dt,
 	int32 ConstraintIndex, const Chaos::FReal DeltaPosition, FJointSlovePair& InJointSloverPair)
