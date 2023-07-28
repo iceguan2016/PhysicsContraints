@@ -391,7 +391,7 @@ void ASoftJointConstraintTestActor::ApplyAxisPositionConstraint(float Dt, int32 
 
 	if(NeedsSolve)
 	{
-		if(bSoftConstraint)
+		if(bSoftPositionConstraint)
 		{
 			SolvePositionConstraintsSoft(Dt, ConstraintIndex, DeltaPosition, InJointSloverPair);
 		}
@@ -591,7 +591,7 @@ void ASoftJointConstraintTestActor::ApplyAxisVelocityConstraint(float Dt, int32 
 				-PositionConstraints.ConstraintRestitution[ConstraintIndex] * InitVel : 0.0f;
 		}*/
 
-		if(bSoftConstraint)
+		if(bSoftVelocityConstraint)
 		{
 			SolveVelocityConstraintsSoft(Dt, ConstraintIndex, InJointSloverPair);
 		}

@@ -219,7 +219,9 @@ public:
 	FJointSettings JointSettings;
 
 	UPROPERTY(EditAnywhere, Category = Joint)
-	bool bSoftConstraint = false;
+	bool bSoftPositionConstraint = false;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSoftVelocityConstraint = false;
 	UPROPERTY(EditAnywhere, Category = Joint)
 	bool bSolvePosition = false;
 	UPROPERTY(EditAnywhere, Category = Joint)
@@ -229,7 +231,6 @@ protected:
 	void AdvanceOneStep(float Dt);
 
 	void InitPositionConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
-
 
 	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
 	void SolvePositionConstraints(float Dt, 
