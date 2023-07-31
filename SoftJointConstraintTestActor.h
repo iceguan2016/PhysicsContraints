@@ -138,53 +138,171 @@ struct FPSDESTRUCTION_API FJointSettings
 	int32 GetConstraintIndex() const;
 };
 
+struct FRigidSloverData
+{
+	bool bStatic = false;
+	TWeakObjectPtr<UPrimitiveComponent> Shape;
+
+	Chaos::FReal InvM = 0.0f;
+	Chaos::FMatrix33 InvLocalInertiaTensor = FMatrix::Identity;
+
+	struct FState 
+	{
+		Chaos::FVec3		P = Chaos::FVec3::ZeroVector;
+		Chaos::FRotation3	Q = Chaos::FRotation3::Identity;
+		Chaos::FVec3		V = Chaos::FVec3::ZeroVector;
+		Chaos::FVec3		W = Chaos::FVec3::ZeroVector;
+
+		Chaos::FVec3		DP = Chaos::FVec3::ZeroVector;
+		Chaos::FVec3		DQ = Chaos::FVec3::ZeroVector;
+	};
+	FState State;
+
+	inline Chaos::FVec3&			P() { return State.P; }
+	inline Chaos::FRotation3&		Q() { return State.Q; }
+	inline Chaos::FVec3&			V() { return State.V; }
+	inline Chaos::FVec3&			W() { return State.W; }
+	inline Chaos::FVec3&			DP(){ return State.DP; }
+	inline Chaos::FVec3&			DQ(){ return State.DQ; }
+
+	inline Chaos::FVec3				CorrectedP() const { return State.P + Chaos::FVec3(State.DP); }
+
+	inline Chaos::FRotation3		CorrectedQ() const { return (!bStatic && !State.DQ.IsZero()) ? Chaos::FRotation3::IntegrateRotationWithAngularVelocity(State.Q, Chaos::FVec3(State.DQ), Chaos::FReal(1)) : State.Q; }
+
+	void IntegrateRotation(const Chaos::FVec3 dTheta)
+	{
+		Chaos::FReal Len = dTheta.Length();
+		if (Len > 1.0e-6f)
+		{
+			State.Q = FQuat(dTheta / Len, Len).GetNormalized();
+		}
+	}
+};
+
+struct FRigidSolverDataContainer
+{
+	struct FRigidSloverHandle
+	{
+		FRigidSolverDataContainer* Container = nullptr;
+		int32 Index = INDEX_NONE;
+
+		FRigidSloverHandle()
+		{
+
+		}
+
+		FRigidSloverHandle(FRigidSolverDataContainer* InContainer, int32 InIndex)
+			: Container(InContainer), Index(InIndex) {
+		}
+
+		inline bool IsValid() const { return Container && Index >= 0; }
+
+		inline FRigidSloverData* Get();
+
+		inline FRigidSloverData& operator*();
+		inline FRigidSloverData* operator->();
+	};
+	//typedef int32 FRigidSloverHandle;
+	//static const FRigidSloverHandle InvalidSloverHandle = -1;
+
+	inline FRigidSloverHandle AllocNewSolverData()
+	{
+		auto& SolverData = SolverDatas.Emplace_GetRef();
+		return FRigidSloverHandle(this, SolverDatas.Num() - 1);
+	}
+
+	inline FRigidSloverHandle FindSolverDataByShape(class UPrimitiveComponent* InShape)
+	{
+		for(int32 i=0; InShape && i<SolverDatas.Num(); ++i)
+		{
+			if(SolverDatas[i].Shape == InShape)
+			{
+				return FRigidSloverHandle(this, i);
+			}
+		}
+		return FRigidSloverHandle();
+	}
+
+	inline FRigidSloverData* GetSolverData(const FRigidSloverHandle& InSolverHandle)
+	{
+		return InSolverHandle.IsValid()? &SolverDatas[InSolverHandle.Index] : nullptr;
+	}
+
+	template<typename TLambda>
+	void ForEach(TLambda Lambda)
+	{
+		for(int32 i=0; i<SolverDatas.Num(); ++i)
+		{
+			Lambda(SolverDatas[i]);
+		}
+	}
+
+private:
+	TArray<FRigidSloverData> SolverDatas;
+};
+
 USTRUCT()
 struct FJointSlovePair
 {
 	GENERATED_BODY()
 
 	UPROPERTY()
-	class UBoxComponent* ShapeA = nullptr;
+	class UPrimitiveComponent* ShapeA = nullptr;
 
 	UPROPERTY()
-	class UBoxComponent* ShapeB = nullptr;
+	class UPrimitiveComponent* ShapeB = nullptr;
 
-	struct FRigidSloverData
+	typedef FRigidSolverDataContainer::FRigidSloverHandle FRigidSloverHandle;	
+	FRigidSloverHandle BodySolver[2];
+
+	inline FRigidSloverData& Body(int BodyIndex)
 	{
-		bool bStatic = false;
-		Chaos::FReal InvM = 0.0f;
-		Chaos::FMatrix33 InvLocalInertiaTensor = FMatrix::Identity;
+		return *BodySolver[BodyIndex];
+	}
 
-		// Local-space constraint settings
-		Chaos::FRigidTransform3 LocalConnectorX;	// Local(CoM)-space joint connector transforms
+	inline const Chaos::FVec3 P(int BodyIndex)
+	{
+		// NOTE: Joints always use the latest post-correction position and rotation. This makes the joint error calculations non-linear and more robust against explosion
+		// but adds a cost because we need to apply the latest correction each time we request the latest transform
+		return BodySolver[BodyIndex]->CorrectedP();
+	}
 
-		// World-space constraint settings
-		Chaos::FVec3 ConnectorX;			// World-space joint connector positions
-		Chaos::FRotation3 ConnectorR;		// World-space joint connector rotations
+	inline const Chaos::FRotation3 Q(int BodyIndex)
+	{
+		// NOTE: Joints always use the latest post-correction position and rotation. This makes the joint error calculations non-linear and more robust against explosion
+		// but adds a cost because we need to apply the latest correction each time we request the latest transform
+		return BodySolver[BodyIndex]->CorrectedQ();
+	}
 
-		Chaos::FMatrix33 InvI;				// World-space
+	inline const Chaos::FVec3 V(int BodyIndex)
+	{
+		return BodySolver[BodyIndex]->V();
+	}
 
-		Chaos::FVec3		P = Chaos::FVec3::ZeroVector;
-		Chaos::FRotation3	R = Chaos::FRotation3::Identity;
-		Chaos::FVec3		V = Chaos::FVec3::ZeroVector;
-		Chaos::FVec3		W = Chaos::FVec3::ZeroVector;
+	inline const Chaos::FVec3 W(int BodyIndex)
+	{
+		return BodySolver[BodyIndex]->W();
+	}
 
-		Chaos::FVec3		DP = Chaos::FVec3::ZeroVector;
-		Chaos::FVec3		DQ = Chaos::FVec3::ZeroVector;
+	void ComputeBodyState(int32 BodyIndex);
 
-		Chaos::FVec3 ConstraintArm; // World-space constraint arm
+	/* -----Update at spawn joint----- */
+	// Local-space constraint settings
+	Chaos::FRigidTransform3 LocalConnectorXs[2];	// Local(CoM)-space joint connector transforms
+	/* -----End----------------------- */
 
-		void IntegrateRotation(const Chaos::FVec3 dTheta)
-		{
-			Chaos::FReal Len = dTheta.Length();
-			if (Len > 1.0e-6f)
-			{
-				R = FQuat(dTheta / Len, Len).GetNormalized();
-			}
-		}
-	};
+	/* -----Update at beginning of the iteration----- */
+	Chaos::FMatrix33		InvIs[2];		// World-space
+	// Pre-calculate P and Q to avoid additional computational overhead for calling FJointSlovePair::P and FJointSlovePair::Q
+	Chaos::FVec3			CurrentPs[2];	// Positions at the beginning of the iteration
+	Chaos::FRotation3		CurrentQs[2];	// Rotations at the beginning of the iteration
+	/* -----End-------------------------------------- */
 
-	FRigidSloverData Body[2];
+	// World-space constraint settings
+	Chaos::FVec3 ConnectorXs[2];			// World-space joint connector positions
+	Chaos::FRotation3 ConnectorRs[2];		// World-space joint connector rotations
+
+	Chaos::FVec3 ConstraintArms[2]; // World-space constraint arm
 
 	Chaos::FVec3 ConstraintLimits;
 	Chaos::FVec3 ConstraintAxis[3];
@@ -206,8 +324,10 @@ class FPSDESTRUCTION_API ASoftJointConstraintTestActor : public AActor
 	GENERATED_BODY()
 
 public:
+	using FRigidSloverHandle = FRigidSolverDataContainer::FRigidSloverHandle;
+
 	UFUNCTION(BlueprintCallable)
-	void AddJointPair(class UBoxComponent* InShapeA, class UBoxComponent* InShapeB, const FTransform& InJointWorldTrans);
+	void AddJointPair(class UPrimitiveComponent* InShapeA, class UPrimitiveComponent* InShapeB, const FTransform& InJointWorldTrans, bool bShapeAStatic=false);
 
 	UFUNCTION(BlueprintCallable)
 	void Simulate(float Dt);
@@ -230,35 +350,37 @@ public:
 protected:
 	void AdvanceOneStep(float Dt);
 
-	void InitPositionConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
+	void InitPositionConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint);
 
-	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
+	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint);
 	void SolvePositionConstraints(float Dt, 
 		int32 ConstraintIndex,
 		const Chaos::FReal DeltaPosition, 
-		FJointSlovePair& InJointSloverPair);
+		FJointSlovePair& Joint);
 	void SolvePositionConstraintsSoft(float Dt,
 		int32 ConstraintIndex,
 		const Chaos::FReal DeltaPosition,
-		FJointSlovePair& InJointSloverPair);
+		FJointSlovePair& Joint);
 
 	void ApplyAxisVelocityConstraint(float Dt,
 		int32 ConstraintIndex,
-		FJointSlovePair& InJointSloverPair);
+		FJointSlovePair& Joint);
 	void SolveLinearVelocityConstraints(float Dt, 
 		int32 ConstraintIndex, 
-		FJointSlovePair& InJointSloverPair,
+		FJointSlovePair& Joint,
 		const Chaos::FReal TargetVel);
-	void SolveVelocityConstraintsSoft(float Dt, int32 ConstraintIndex, FJointSlovePair& InJointSloverPair);
+	void SolveVelocityConstraintsSoft(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint);
 
 	void InitPlanarPositionConstraint(
 		float Dt, 
-		FJointSlovePair& InJointSloverPair,
+		FJointSlovePair& Joint,
 		const int32 AxisIndex);
 
-	void ApplyCorrections(FJointSlovePair& InJointSloverPair);
+	void ApplyCorrections(FJointSlovePair& Joint);
 
 private:
+	FRigidSolverDataContainer RigidSloverDataContainer;
+
 	UPROPERTY()
 	TArray<FJointSlovePair> JointPairs;
 };
