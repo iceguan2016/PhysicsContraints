@@ -286,6 +286,17 @@ struct FJointSlovePair
 
 	void ComputeBodyState(int32 BodyIndex);
 
+	void InitPositionConstraintDatas(
+		const int32 ConstraintIndex,
+		const Chaos::FVec3& ConstraintAxis,
+		const Chaos::FReal& ConstraintDelta,
+		const Chaos::FReal Dt,
+		const Chaos::FReal ConstraintLimit,
+		const Chaos::FVec3& ConstraintArm0,
+		const Chaos::FVec3& ConstraintArm1);
+
+	void InitPositionEffectiveMass(const int32 ConstraintIndex, const Chaos::FReal Dt);
+
 	/* -----Update at spawn joint----- */
 	// Local-space constraint settings
 	Chaos::FRigidTransform3 LocalConnectorXs[2];	// Local(CoM)-space joint connector transforms
@@ -296,13 +307,13 @@ struct FJointSlovePair
 	// Pre-calculate P and Q to avoid additional computational overhead for calling FJointSlovePair::P and FJointSlovePair::Q
 	Chaos::FVec3			CurrentPs[2];	// Positions at the beginning of the iteration
 	Chaos::FRotation3		CurrentQs[2];	// Rotations at the beginning of the iteration
+	// dims0: ConstraintIndex, dims1: BodyIndex? 
+	Chaos::FVec3			ConstraintArms[3][2]; // World-space constraint arm
 	/* -----End-------------------------------------- */
 
 	// World-space constraint settings
 	Chaos::FVec3 ConnectorXs[2];			// World-space joint connector positions
 	Chaos::FRotation3 ConnectorRs[2];		// World-space joint connector rotations
-
-	Chaos::FVec3 ConstraintArms[2]; // World-space constraint arm
 
 	Chaos::FVec3 ConstraintLimits;
 	Chaos::FVec3 ConstraintAxis[3];
@@ -375,6 +386,10 @@ protected:
 		float Dt, 
 		FJointSlovePair& Joint,
 		const int32 AxisIndex);
+
+	void InitSphericalPositionConstraint(
+		float Dt,
+		FJointSlovePair& Joint);
 
 	void ApplyCorrections(FJointSlovePair& Joint);
 
