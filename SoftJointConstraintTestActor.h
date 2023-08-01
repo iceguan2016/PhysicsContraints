@@ -327,6 +327,8 @@ struct FJointSlovePair
 	Chaos::FReal ConstraintLambda[3] = {0};
 
 	FSpringPart SpingPart;
+
+	FJointSettings JointSettings;
 };
 
 UCLASS(Blueprintable, BlueprintType)
@@ -360,8 +362,6 @@ public:
 
 protected:
 	void AdvanceOneStep(float Dt);
-
-	void InitPositionConstraints(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint);
 
 	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint);
 	void SolvePositionConstraints(float Dt, 
