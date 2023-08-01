@@ -492,7 +492,7 @@ void ASoftJointConstraintTestActor::ApplyAxisPositionConstraint(float Dt, int32 
 		NeedsSolve = true;
 	}
 
-	if(NeedsSolve && FMath::Abs(DeltaPosition) > Joint.PositionTolerance)
+	if(NeedsSolve /*&& FMath::Abs(DeltaPosition) > Joint.PositionTolerance*/)
 	{
 		if(bSoftPositionConstraint)
 		{
