@@ -333,10 +333,9 @@ struct FJointSlovePair
 	// Tolerances below which we stop solving
 	Chaos::FReal PositionTolerance;					// Distance error below which we consider a constraint or drive solved
 	Chaos::FReal AngleTolerance;						// Angle error below which we consider a constraint or drive solved
-	/* -----End-------------------------------------- */
-	
 
-	FSpringPart SpingPart;
+	FSpringPart SpingPart[3];
+	/* -----End-------------------------------------- */
 
 	FJointSettings JointSettings;
 };

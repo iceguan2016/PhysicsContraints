@@ -80,7 +80,7 @@ void FJointSlovePair::InitPositionEffectiveMass(
 	// Soft mass
 	float EffectiveMass = 0;
 	auto K = ConstraintHardIM[ConstraintIndex];
-	SpingPart.CalculateSpringProperties(
+	SpingPart[ConstraintIndex].CalculateSpringProperties(
 		Dt,
 		K,
 		1.0f,
@@ -817,7 +817,7 @@ void ASoftJointConstraintTestActor::SolveVelocityConstraintsSoft(float Dt, int32
 		//
 		// lambda = -K^-1 (J v + b)
 		Chaos::FReal effective_mass = 1.0 / Joint.ConstraintSoftIM[ConstraintIndex];
-		float lambda = -effective_mass * (jv + Joint.SpingPart.GetBias(Joint.ConstraintLambda[ConstraintIndex]));
+		float lambda = -effective_mass * (jv + Joint.SpingPart[ConstraintIndex].GetBias(Joint.ConstraintLambda[ConstraintIndex]));
 		Joint.ConstraintLambda[ConstraintIndex] += lambda; // Store accumulated impulse
 
 		// apply lambda
