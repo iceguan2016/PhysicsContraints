@@ -163,6 +163,7 @@ struct FRigidSloverData
 		Chaos::FVec3		DQ = Chaos::FVec3::ZeroVector;
 	};
 	FState State;
+	FState OldState;
 
 	inline Chaos::FVec3&			P() { return State.P; }
 	inline Chaos::FRotation3&		Q() { return State.Q; }
@@ -357,6 +358,9 @@ public:
 	UFUNCTION(BlueprintCallable)
 	void DebugDraw(float Dt);
 
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bEnableReset = false;
+
 	UPROPERTY(EditAnywhere, Category=Joint)
 	FJointSettings JointSettings;
 
@@ -368,6 +372,10 @@ public:
 	bool bSolvePosition = false;
 	UPROPERTY(EditAnywhere, Category = Joint)
 	bool bSolveVelocity = true;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	int32 NumPositionIterations = 8;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	int32 NumVelocityIterations = 1;
 
 protected:
 	void AdvanceOneStep(float Dt);
