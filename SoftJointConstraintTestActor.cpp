@@ -91,28 +91,356 @@ void FJointSlovePair::InitPositionEffectiveMass(
 	ConstraintSoftIM[ConstraintIndex] = 1.0 / EffectiveMass;
 }
 
+void FJointSlovePair::ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex)
+{
+	if (ConstraintIndex == INDEX_NONE)
+	{
+		return;
+	}
+
+	auto& b0 = Body(0);
+	auto& b1 = Body(1);
+
+	const Chaos::FVec3 CX = b1.DP() - b0.DP() + Chaos::FVec3::CrossProduct(b1.DQ(), ConstraintArms[ConstraintIndex][1]) - Chaos::FVec3::CrossProduct(b0.DQ(), ConstraintArms[ConstraintIndex][0]);
+
+	Chaos::FReal DeltaPosition = ConstraintCX[ConstraintIndex] + Chaos::FVec3::DotProduct(CX, ConstraintAxis[ConstraintIndex]);
+
+	bool NeedsSolve = false;
+	if (DeltaPosition > ConstraintLimits[ConstraintIndex])
+	{
+		DeltaPosition -= ConstraintLimits[ConstraintIndex];
+		NeedsSolve = true;
+	}
+	else if (DeltaPosition < -ConstraintLimits[ConstraintIndex])
+	{
+		DeltaPosition += ConstraintLimits[ConstraintIndex];
+		NeedsSolve = true;
+	}
+
+	if (NeedsSolve /*&& FMath::Abs(DeltaPosition) > Joint.PositionTolerance*/)
+	{
+		if (JointSettings.bSoftPositionConstraint)
+		{
+			SolvePositionConstraintsSoft(Dt, ConstraintIndex, DeltaPosition);
+		}
+		else
+		{
+			SolvePositionConstraints(Dt, ConstraintIndex, DeltaPosition);
+		}
+	}
+}
+
+void FJointSlovePair::InitPlanarPositionConstraint(float Dt, const int32 AxisIndex)
+{
+	// 要用修正后的位置计算，P+DP
+	const auto& bX0 = CurrentPs[0];
+	const auto& cR0 = ConnectorRs[0];
+	const auto& cX0 = ConnectorXs[0];
+
+	const auto& bX1 = CurrentPs[1];
+	const auto& cR1 = ConnectorRs[1];
+	const auto& cX1 = ConnectorXs[1];
+
+	// Calculate points relative to body, "Constraints Derivation for Rigid Body Simulation in 3D. equation 55" 
+	// r0 + u = (cX0 - bX1) + (cX1 - cX0) = cX1 - bX0
+	const Chaos::FVec3 ConstraintArm0 = ConnectorXs[1] - CurrentPs[0];
+	// r1 = cX1 - bX1
+	const Chaos::FVec3 ConstraintArm1 = ConnectorXs[1] - CurrentPs[1];
+
+	const Chaos::FMatrix33 R0M = cR0.ToMatrix();
+	Chaos::FVec3 Axis = R0M.GetAxis(AxisIndex);
+	Chaos::FReal Delta = Chaos::FVec3::DotProduct(cX1 - cX0, Axis);
+
+	InitPositionConstraintDatas(AxisIndex, Axis, Delta, Dt, JointSettings.LimitDistance[AxisIndex], ConstraintArm0, ConstraintArm1);
+}
+
+
+void FJointSlovePair::InitSphericalPositionConstraint(float Dt)
+{
+	const auto& bX0 = CurrentPs[0];
+	const auto& cR0 = ConnectorRs[0];
+	const auto& cX0 = ConnectorXs[0];
+
+	const auto& bX1 = CurrentPs[1];
+	const auto& cR1 = ConnectorRs[1];
+	const auto& cX1 = ConnectorXs[1];
+
+	Chaos::FVec3 SphereAxis0 = Chaos::FVec3::UnitX();
+	Chaos::FReal SphereDelta0 = 0;
+
+	const Chaos::FVec3 DX = cX1 - cX0;
+	const Chaos::FReal DXLen = DX.Size();
+	if (DXLen > UE_KINDA_SMALL_NUMBER)
+	{
+		SphereAxis0 = DX / DXLen;
+		SphereDelta0 = DXLen;
+	}
+
+	const Chaos::FVec3 SphereAxis1 = (FMath::Abs(FMath::Abs(SphereAxis0.Dot(Chaos::FVec3(1, 0, 0)) - 1.0)) > UE_SMALL_NUMBER) ? SphereAxis0.Cross(Chaos::FVec3(1, 0, 0)) :
+		(FMath::Abs(FMath::Abs(SphereAxis0.Dot(Chaos::FVec3(0, 1, 0)) - 1.0)) > UE_SMALL_NUMBER) ? SphereAxis0.Cross(Chaos::FVec3(0, 1, 0)) : SphereAxis0.Cross(Chaos::FVec3(0, 0, 1));
+	const Chaos::FVec3 SphereAxis2 = SphereAxis0.Cross(SphereAxis1);
+
+	// Using Connector1 for both conserves angular momentum and avoid having 
+	// too much torque applied onto the COM. But can only be used for limited constraints
+	const Chaos::FVec3 ConstraintArm0 = ConnectorXs[1] - CurrentPs[0];
+	const Chaos::FVec3 ConstraintArm1 = ConnectorXs[1] - CurrentPs[1];
+
+	InitPositionConstraintDatas(0, SphereAxis0, SphereDelta0, Dt, JointSettings.LimitDistance[0], ConstraintArm0, ConstraintArm1);
+	InitPositionConstraintDatas(1, SphereAxis1, 0, Dt, JointSettings.LimitDistance[1], ConstraintArm0, ConstraintArm1);
+	InitPositionConstraintDatas(2, SphereAxis2, 0, Dt, JointSettings.LimitDistance[2], ConstraintArm0, ConstraintArm1);
+}
+
+void FJointSlovePair::ApplyCorrections()
+{
+	auto ApplyCorrection = [&](int BodyIndex) {
+		Body(BodyIndex).P() = P(BodyIndex);
+		Body(BodyIndex).Q() = Q(BodyIndex);
+		//Joint.Body(BodyIndex).DP() = Chaos::FVec3::ZeroVector;
+		//Joint.Body(BodyIndex).DQ() = Chaos::FVec3::ZeroVector;
+	};
+
+	ApplyCorrection(0);
+	ApplyCorrection(1);
+}
+
+void FJointSlovePair::SolvePositionConstraints(float Dt,
+	int32 ConstraintIndex, const Chaos::FReal DeltaPosition)
+{
+	if (!JointSettings.bSolvePosition) return;
+
+	if (ConstraintIndex != INDEX_NONE)
+	{
+		auto& b0 = Body(0);
+		auto& b1 = Body(1);
+
+		auto C = DeltaPosition;
+		auto effective_mass = 1.0 / ConstraintHardIM[ConstraintIndex];
+		auto delta_lambda = -effective_mass * C;
+
+		ConstraintLambda[ConstraintIndex] += delta_lambda;
+
+		auto dp = delta_lambda * ConstraintAxis[ConstraintIndex];
+
+		if (!b0.bStatic)
+		{
+			const Chaos::FVec3 dV0dt = b0.InvM * dp;
+			const Chaos::FVec3 dW0dt = InvIs[0] * (ConstraintArms[ConstraintIndex][0].Cross(dp));
+
+			b0.DP() -= dV0dt;
+			b0.DQ() -= dW0dt;
+
+			//b0.P -= dV0dt;
+			//b0.IntegrateRotation(-dW0dt);
+		}
+		if (!b1.bStatic)
+		{
+			const Chaos::FVec3 dV1dt = b1.InvM * dp;
+			const Chaos::FVec3 dW1dt = InvIs[1] * (ConstraintArms[ConstraintIndex][1].Cross(dp));
+
+			b1.DP() += dV1dt;
+			b1.DQ() += dW1dt;
+
+			//b1.P += dV1dt;
+			//b1.IntegrateRotation(dW1dt);
+		}
+	}
+}
+
+void FJointSlovePair::SolvePositionConstraintsSoft(float Dt,
+	int32 ConstraintIndex, const Chaos::FReal DeltaPosition)
+{
+	if (!JointSettings.bSolvePosition) return;
+
+	if (ConstraintIndex != INDEX_NONE)
+	{
+		auto& b0 = Body(0);
+		auto& b1 = Body(1);
+
+		const auto& Axis = ConstraintAxis[ConstraintIndex];
+
+		Chaos::FReal total_lambda = ConstraintLambda[ConstraintIndex];
+		Chaos::FReal k_hard = ConstraintHardIM[ConstraintIndex];
+		Chaos::FReal effective_mass_hard = 1.0 / k_hard;
+
+		Chaos::FReal omega = 2.0f * PI * JointSettings.Frequency;
+
+		// Calculate spring constant k and drag constant c (page 45)
+		Chaos::FReal k = effective_mass_hard * FMath::Square(omega);
+		Chaos::FReal c = 2.0f * effective_mass_hard * JointSettings.DampingRatio * omega;
+
+		// Ks = M_hard_eff * k * h^2
+		// Kd = M_hard_eff * c * h
+		Chaos::FReal Ks = effective_mass_hard * k * Dt * Dt;
+		Chaos::FReal Kd = effective_mass_hard * c * Dt;
+
+		Chaos::FVec3 v0 = b0.V() + b0.W().Cross(ConstraintArms[ConstraintIndex][0]);
+		Chaos::FVec3 v1 = b1.V() + b1.W().Cross(ConstraintArms[ConstraintIndex][1]);
+
+#if 1
+		// Cdot*h = Jv*h - v_target*h 
+		// v_target = 0
+		Chaos::FReal Cdot_x_h = Axis.Dot(v1 - v0) * Dt;
+
+		// DeltaPosition = C2 + Cdelta
+
+		// (Khard*(Kd+Ks)+1)*delta_lambda = -(Ks*(C2 + Cdelta) + Kd*Cdot*h + Lambda1)
+		Chaos::FReal delta_lambda = -(Ks * DeltaPosition + Kd * Cdot_x_h + total_lambda) / (k_hard * (Kd + Ks) + 1);
+
+		ConstraintLambda[ConstraintIndex] += delta_lambda;
+
+		// dp = J_T * delta_lambda
+		Chaos::FVec3 dp = delta_lambda * Axis;
+
+		if (!b0.bStatic)
+		{
+			const Chaos::FVec3 dV0dt = b0.InvM * dp;
+			const Chaos::FVec3 dW0dt = InvIs[0] * (ConstraintArms[ConstraintIndex][0].Cross(dp));
+
+			b0.DP() -= dV0dt;
+			b0.DQ() -= dW0dt;
+		}
+		if (!b1.bStatic)
+		{
+			const Chaos::FVec3 dV1dt = b1.InvM * dp;
+			const Chaos::FVec3 dW1dt = InvIs[1] * (ConstraintArms[ConstraintIndex][1].Cross(dp));
+
+			b1.DP() += dV1dt;
+			b1.DQ() += dW1dt;
+		}
+#else
+		Chaos::FReal Cdot_x_h = Axis.Dot(v0 - v1) * Dt;
+		Chaos::FReal delta_lambda = (Ks * DeltaPosition - Kd * Cdot_x_h - total_lambda) / (k_hard * (Kd + Ks) + 1);
+		ConstraintLambda[ConstraintIndex] += delta_lambda;
+
+		// dp = J_T * delta_lambda
+		Chaos::FVec3 dp = delta_lambda * Axis;
+
+		if (!b0.bStatic)
+		{
+			const Chaos::FVec3 dV0dt = b0.InvM * dp;
+			const Chaos::FVec3 dW0dt = InvIs[0] * (ConstraintArms[ConstraintIndex][0].Cross(dp));
+
+			b0.DP() += dV0dt;
+			b0.DQ() += dW0dt;
+		}
+		if (!b1.bStatic)
+		{
+			const Chaos::FVec3 dV1dt = b1.InvM * dp;
+			const Chaos::FVec3 dW1dt = InvIs[1] * (ConstraintArms[ConstraintIndex][1].Cross(dp));
+
+			b1.DP() -= dV1dt;
+			b1.DQ() -= dW1dt;
+		}
+#endif
+	}
+}
+
+void FJointSlovePair::ApplyAxisVelocityConstraint(float Dt, int32 ConstraintIndex)
+{
+	if (!JointSettings.bSolveVelocity) return;
+
+	if (!JointSettings.bSolvePosition || FMath::Abs(ConstraintLambda[ConstraintIndex]) > UE_SMALL_NUMBER)
+	{
+		Chaos::FReal TargetVel = 0.0f;
+		/*if (ConstraintRestitution[ConstraintIndex] != 0.0f)
+		{
+			const FReal InitVel = InitConstraintAxisLinearVelocities[ConstraintIndex];
+			TargetVel = InitVel > Chaos_Joint_LinearVelocityThresholdToApplyRestitution ?
+				-PositionConstraints.ConstraintRestitution[ConstraintIndex] * InitVel : 0.0f;
+		}*/
+
+		if (JointSettings.bSoftVelocityConstraint)
+		{
+			SolveVelocityConstraintsSoft(Dt, ConstraintIndex);
+		}
+		else
+		{
+			SolveLinearVelocityConstraints(Dt, ConstraintIndex, TargetVel);
+		}
+	}
+}
+
+void FJointSlovePair::SolveLinearVelocityConstraints(float Dt,
+	int32 ConstraintIndex, const Chaos::FReal TargetVel)
+{
+	auto& b0 = Body(0);
+	auto& b1 = Body(1);
+
+	const Chaos::FVec3 CV0 = b0.V() + b0.W().Cross(ConstraintArms[ConstraintIndex][0]);
+	const Chaos::FVec3 CV1 = b1.V() + b1.W().Cross(ConstraintArms[ConstraintIndex][1]);
+	const Chaos::FVec3 CV = CV1 - CV0;
+	// K * DeltaLamda = -JV
+	const Chaos::FReal DeltaLambda = -(CV.Dot(ConstraintAxis[ConstraintIndex]) - TargetVel) / ConstraintHardIM[ConstraintIndex];
+
+	const Chaos::FVec3 MDV = DeltaLambda * ConstraintAxis[ConstraintIndex];
+
+	if (!b0.bStatic)
+	{
+		const Chaos::FVec3 DV0 = b0.InvM * MDV;
+		const Chaos::FVec3 DW0 = InvIs[0] * (ConstraintArms[ConstraintIndex][0].Cross(MDV));;
+
+		b0.V() -= DV0;
+		b0.W() -= DW0;
+	}
+	if (!b1.bStatic)
+	{
+		const Chaos::FVec3 DV1 = b1.InvM * MDV;
+		const Chaos::FVec3 DW1 = InvIs[1] * (ConstraintArms[ConstraintIndex][1].Cross(MDV));;
+
+		b1.V() += DV1;
+		b1.W() += DW1;
+	}
+}
+
+void FJointSlovePair::SolveVelocityConstraintsSoft(float Dt, int32 ConstraintIndex)
+{
+	if (!JointSettings.bSolveVelocity) return;
+
+	if (ConstraintIndex != INDEX_NONE)
+	{
+		auto& b0 = Body(0);
+		auto& b1 = Body(1);
+
+		const auto& Axis = ConstraintAxis[ConstraintIndex];
+
+		Chaos::FVec3 v0 = b0.V() + b0.W().Cross(ConstraintArms[ConstraintIndex][0]);
+		Chaos::FVec3 v1 = b1.V() + b1.W().Cross(ConstraintArms[ConstraintIndex][1]);
+
+		Chaos::FReal jv = Axis.Dot(v1 - v0);
+
+		// Lagrange multiplier is:
+		//
+		// lambda = -K^-1 (J v + b)
+		Chaos::FReal effective_mass = 1.0 / ConstraintSoftIM[ConstraintIndex];
+		float lambda = -effective_mass * (jv + SpingPart[ConstraintIndex].GetBias(ConstraintLambda[ConstraintIndex]));
+		ConstraintLambda[ConstraintIndex] += lambda; // Store accumulated impulse
+
+		// apply lambda
+		const Chaos::FVec3 dp = lambda * Axis;
+
+		if (!b0.bStatic)
+		{
+			const Chaos::FVec3 dV0 = b0.InvM * dp;
+			const Chaos::FVec3 dW0 = InvIs[0] * (ConstraintArms[ConstraintIndex][0].Cross(dp));
+
+			b0.V() -= dV0;
+			b0.W() -= dW0;
+		}
+		if (!b1.bStatic)
+		{
+			const Chaos::FVec3 dV1 = b1.InvM * dp;
+			const Chaos::FVec3 dW1 = InvIs[1] * (ConstraintArms[ConstraintIndex][1].Cross(dp));
+
+			b1.V() += dV1;
+			b1.W() += dW1;
+		}
+	}
+}
+
+
 /* -----ASoftJointConstraintTestActor----- */
 
 const Chaos::FVec3 Gravity{ 0, 0, -980 };
-
-int32 FJointSettings::GetConstraintIndex() const
-{
-	int32 ConstraintIndex = INDEX_NONE;
-	if (LimitDistance[0] > 0.01f)
-	{
-		ConstraintIndex = 0;
-	}
-	else if (LimitDistance[1] > 0.01f)
-	{
-		ConstraintIndex = 1;
-	}
-	else
-	{
-		ConstraintIndex = 2;
-	}
-
-	return ConstraintIndex;
-}
 
 void ASoftJointConstraintTestActor::AddJointPair(
 	class UPrimitiveComponent* InShapeA, 
@@ -338,9 +666,9 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 			// 5.Update constraint arm for each body
 			/*for(int32 j=0; j<3; ++j)
 			{
-				InitPlanarPositionConstraint(Dt, Joint, j);
+				Joint.InitPlanarPositionConstraint(Dt, j);
 			}*/
-			InitSphericalPositionConstraint(Dt, Joint);
+			Joint.InitSphericalPositionConstraint(Dt);
 
 			// 6.Clear constraint lambda
 			Joint.ConstraintLambda[0] = Joint.ConstraintLambda[1] = Joint.ConstraintLambda[2] = 0;
@@ -359,7 +687,7 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 
 				for (int32 j = 0; j < 3; ++j)
 				{
-					ApplyAxisPositionConstraint(Dt, j, Joint);
+					Joint.ApplyAxisPositionConstraint(Dt, j);
 				}
 			}
 		}
@@ -390,7 +718,7 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 
 				for (int32 j = 0; j < 3; ++j)
 				{
-					ApplyAxisVelocityConstraint(Dt, j, Joint);
+					Joint.ApplyAxisVelocityConstraint(Dt, j);
 				}
 			}
 
@@ -429,7 +757,7 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 		{
 			auto& Joint = JointPairs[i];
 
-			ApplyCorrections(Joint);
+			Joint.ApplyCorrections();
 
 			auto& b0 = Joint.Body(0);
 			auto& b1 = Joint.Body(1);
@@ -449,8 +777,6 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 
 void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 {
-	int32 ConstraintIndex = JointSettings.GetConstraintIndex();
-
 	for (int32 i = 0; i < JointPairs.Num(); ++i)
 	{
 		auto& Joint = JointPairs[i];
@@ -461,9 +787,9 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 		// Debug draw
 		{
 			auto World = GetWorld();
-			auto DebugDrawBody = [&Joint, &World, &ConstraintIndex](int32 bodyIndex, FRigidSloverData& b, const FColor& c) {
+			auto DebugDrawBody = [&Joint, &World](int32 bodyIndex, FRigidSloverData& b, const FColor& c) {
 				auto p0 = b.P();
-				auto p1 = b.P() + Joint.ConstraintArms[ConstraintIndex][bodyIndex];
+				//auto p1 = b.P() + Joint.ConstraintArms[ConstraintIndex][bodyIndex];
 				//DrawDebugLine(World, p0, p1, c, false, -1, 0, 1.0f);
 
 				//DrawDebugBox(World, b.ConnectorX, FVector{2.0, 2.0f, 2.0f}, FQuat::Identity, c, false, -1, 0, 1.0f);
@@ -481,8 +807,7 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 			DrawDebugLine(World, Joint.ConnectorXs[0], Joint.ConnectorXs[1], FColor::Blue, false, -1, 0, 1.0f);
 
 			auto P = (Joint.ConnectorXs[0] + Joint.ConnectorXs[1]) * 0.5f;
-			auto Dist = Joint.ConstraintCX[ConstraintIndex];
-			DrawDebugString(World, P, FString::Printf(TEXT("Dist:%.3fcm"), Dist), nullptr, FColor::Red, 0, false, 1.5f);
+			DrawDebugString(World, P, FString::Printf(TEXT("Dist:%s"), *Joint.ConstraintCX.ToString()), nullptr, FColor::Red, 0, false, 1.5f);
 		}
 	}
 
@@ -494,350 +819,4 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 
 		//DrawDebugBox(World, Center, Extent, Roation, FColor::Red, false, -1, 0, 3.0f);
 	});
-}
-
-void ASoftJointConstraintTestActor::ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint)
-{
-	if (ConstraintIndex == INDEX_NONE) 
-	{
-		return;
-	}
-
-	auto& b0 = Joint.Body(0);
-	auto& b1 = Joint.Body(1);
-
-	const Chaos::FVec3 CX = b1.DP() - b0.DP() + Chaos::FVec3::CrossProduct(b1.DQ(), Joint.ConstraintArms[ConstraintIndex][1]) - Chaos::FVec3::CrossProduct(b0.DQ(), Joint.ConstraintArms[ConstraintIndex][0]);
-
-	Chaos::FReal DeltaPosition = Joint.ConstraintCX[ConstraintIndex] + Chaos::FVec3::DotProduct(CX, Joint.ConstraintAxis[ConstraintIndex]);
-
-	bool NeedsSolve = false;
-	if (DeltaPosition > Joint.ConstraintLimits[ConstraintIndex])
-	{
-		DeltaPosition -= Joint.ConstraintLimits[ConstraintIndex];
-		NeedsSolve = true;
-	}
-	else if (DeltaPosition < -Joint.ConstraintLimits[ConstraintIndex])
-	{
-		DeltaPosition += Joint.ConstraintLimits[ConstraintIndex];
-		NeedsSolve = true;
-	}
-
-	if(NeedsSolve /*&& FMath::Abs(DeltaPosition) > Joint.PositionTolerance*/)
-	{
-		if(bSoftPositionConstraint)
-		{
-			SolvePositionConstraintsSoft(Dt, ConstraintIndex, DeltaPosition, Joint);
-		}
-		else
-		{
-			SolvePositionConstraints(Dt, ConstraintIndex, DeltaPosition, Joint);
-		}
-	}
-}
-
-void ASoftJointConstraintTestActor::InitPlanarPositionConstraint(float Dt, FJointSlovePair& Joint, const int32 AxisIndex)
-{
-	// 要用修正后的位置计算，P+DP
-	const auto& bX0 = Joint.CurrentPs[0];
-	const auto& cR0 = Joint.ConnectorRs[0];
-	const auto& cX0 = Joint.ConnectorXs[0];
-
-	const auto& bX1 = Joint.CurrentPs[1];
-	const auto& cR1 = Joint.ConnectorRs[1];
-	const auto& cX1 = Joint.ConnectorXs[1];
-
-	// Calculate points relative to body, "Constraints Derivation for Rigid Body Simulation in 3D. equation 55" 
-	// r0 + u = (cX0 - bX1) + (cX1 - cX0) = cX1 - bX0
-	const Chaos::FVec3 ConstraintArm0 = Joint.ConnectorXs[1] - Joint.CurrentPs[0];
-	// r1 = cX1 - bX1
-	const Chaos::FVec3 ConstraintArm1 = Joint.ConnectorXs[1] - Joint.CurrentPs[1];
-
-	const Chaos::FMatrix33 R0M = cR0.ToMatrix();
-	Chaos::FVec3 Axis = R0M.GetAxis(AxisIndex);
-	Chaos::FReal Delta = Chaos::FVec3::DotProduct(cX1 - cX0, Axis);
-
-	Joint.InitPositionConstraintDatas(AxisIndex, Axis, Delta, Dt, JointSettings.LimitDistance[AxisIndex], ConstraintArm0, ConstraintArm1);
-}
-
-
-void ASoftJointConstraintTestActor::InitSphericalPositionConstraint(float Dt, FJointSlovePair& Joint)
-{
-	const auto& bX0 = Joint.CurrentPs[0];
-	const auto& cR0 = Joint.ConnectorRs[0];
-	const auto& cX0 = Joint.ConnectorXs[0];
-
-	const auto& bX1 = Joint.CurrentPs[1];
-	const auto& cR1 = Joint.ConnectorRs[1];
-	const auto& cX1 = Joint.ConnectorXs[1];
-
-	Chaos::FVec3 SphereAxis0 = Chaos::FVec3::UnitX();
-	Chaos::FReal SphereDelta0 = 0;
-
-	const Chaos::FVec3 DX = cX1 - cX0;
-	const Chaos::FReal DXLen = DX.Size();
-	if (DXLen > UE_KINDA_SMALL_NUMBER)
-	{
-		SphereAxis0 = DX / DXLen;
-		SphereDelta0 = DXLen;
-	}
-
-	const Chaos::FVec3 SphereAxis1 = (FMath::Abs(FMath::Abs(SphereAxis0.Dot(Chaos::FVec3(1, 0, 0)) - 1.0)) > UE_SMALL_NUMBER) ? SphereAxis0.Cross(Chaos::FVec3(1, 0, 0)) :
-		(FMath::Abs(FMath::Abs(SphereAxis0.Dot(Chaos::FVec3(0, 1, 0)) - 1.0)) > UE_SMALL_NUMBER) ? SphereAxis0.Cross(Chaos::FVec3(0, 1, 0)) : SphereAxis0.Cross(Chaos::FVec3(0, 0, 1));
-	const Chaos::FVec3 SphereAxis2 = SphereAxis0.Cross(SphereAxis1);
-
-	// Using Connector1 for both conserves angular momentum and avoid having 
-	// too much torque applied onto the COM. But can only be used for limited constraints
-	const Chaos::FVec3 ConstraintArm0 = Joint.ConnectorXs[1] - Joint.CurrentPs[0];
-	const Chaos::FVec3 ConstraintArm1 = Joint.ConnectorXs[1] - Joint.CurrentPs[1];
-
-	Joint.InitPositionConstraintDatas(0, SphereAxis0, SphereDelta0, Dt, JointSettings.LimitDistance[0], ConstraintArm0, ConstraintArm1);
-	Joint.InitPositionConstraintDatas(1, SphereAxis1, 0, Dt, JointSettings.LimitDistance[1], ConstraintArm0, ConstraintArm1);
-	Joint.InitPositionConstraintDatas(2, SphereAxis2, 0, Dt, JointSettings.LimitDistance[2], ConstraintArm0, ConstraintArm1);
-}
-
-void ASoftJointConstraintTestActor::ApplyCorrections(FJointSlovePair& Joint)
-{
-	auto ApplyCorrection = [&Joint](int BodyIndex) {
-		Joint.Body(BodyIndex).P() = Joint.P(BodyIndex);
-		Joint.Body(BodyIndex).Q() = Joint.Q(BodyIndex);
-		//Joint.Body(BodyIndex).DP() = Chaos::FVec3::ZeroVector;
-		//Joint.Body(BodyIndex).DQ() = Chaos::FVec3::ZeroVector;
-	};
-
-	ApplyCorrection(0);
-	ApplyCorrection(1);
-}
-
-void ASoftJointConstraintTestActor::SolvePositionConstraints(float Dt,
-	int32 ConstraintIndex, const Chaos::FReal DeltaPosition, FJointSlovePair& Joint)
-{
-	if(!bSolvePosition) return;
-
-	if (ConstraintIndex != INDEX_NONE)
-	{
-		auto& b0 = Joint.Body(0);
-		auto& b1 = Joint.Body(1);
-
-		auto C = DeltaPosition;
-		auto effective_mass = 1.0 / Joint.ConstraintHardIM[ConstraintIndex];
-		auto delta_lambda = -effective_mass * C;
-	
-		Joint.ConstraintLambda[ConstraintIndex] += delta_lambda;
-		
-		auto dp = delta_lambda * Joint.ConstraintAxis[ConstraintIndex];
-
-		if (!b0.bStatic)
-		{
-			const Chaos::FVec3 dV0dt = b0.InvM * dp;
-			const Chaos::FVec3 dW0dt = Joint.InvIs[0] * (Joint.ConstraintArms[ConstraintIndex][0].Cross(dp));
-
-			b0.DP() -= dV0dt;
-			b0.DQ() -= dW0dt;
-			
-			//b0.P -= dV0dt;
-			//b0.IntegrateRotation(-dW0dt);
-		}
-		if (!b1.bStatic)
-		{
-			const Chaos::FVec3 dV1dt = b1.InvM * dp;
-			const Chaos::FVec3 dW1dt = Joint.InvIs[1] * (Joint.ConstraintArms[ConstraintIndex][1].Cross(dp));
-
-			b1.DP() += dV1dt;
-			b1.DQ() += dW1dt;
-
-			//b1.P += dV1dt;
-			//b1.IntegrateRotation(dW1dt);
-		}
-	}
-}
-
-void ASoftJointConstraintTestActor::SolvePositionConstraintsSoft(float Dt, 
-	int32 ConstraintIndex, const Chaos::FReal DeltaPosition, FJointSlovePair& Joint)
-{
-	if (!bSolvePosition) return;
-
-	if (ConstraintIndex != INDEX_NONE)
-	{
-		auto& b0 = Joint.Body(0);
-		auto& b1 = Joint.Body(1);
-
-		const auto& Axis = Joint.ConstraintAxis[ConstraintIndex];
-
-		Chaos::FReal total_lambda = Joint.ConstraintLambda[ConstraintIndex];
-		Chaos::FReal k_hard = Joint.ConstraintHardIM[ConstraintIndex];
-		Chaos::FReal effective_mass_hard = 1.0 / k_hard;
-
-		Chaos::FReal omega = 2.0f * PI * JointSettings.Frequency;
-
-		// Calculate spring constant k and drag constant c (page 45)
-		Chaos::FReal k = effective_mass_hard * FMath::Square(omega);
-		Chaos::FReal c = 2.0f * effective_mass_hard * JointSettings.DampingRatio * omega;
-
-		// Ks = M_hard_eff * k * h^2
-		// Kd = M_hard_eff * c * h
-		Chaos::FReal Ks = effective_mass_hard * k * Dt * Dt;
-		Chaos::FReal Kd = effective_mass_hard * c * Dt;
-
-		Chaos::FVec3 v0 = b0.V() + b0.W().Cross(Joint.ConstraintArms[ConstraintIndex][0]);
-		Chaos::FVec3 v1 = b1.V() + b1.W().Cross(Joint.ConstraintArms[ConstraintIndex][1]);
-
-#if 1
-		// Cdot*h = Jv*h - v_target*h 
-		// v_target = 0
-		Chaos::FReal Cdot_x_h = Axis.Dot(v1 - v0) * Dt;
-
-		// DeltaPosition = C2 + Cdelta
-
-		// (Khard*(Kd+Ks)+1)*delta_lambda = -(Ks*(C2 + Cdelta) + Kd*Cdot*h + Lambda1)
-		Chaos::FReal delta_lambda = -(Ks*DeltaPosition + Kd*Cdot_x_h + total_lambda) / (k_hard * (Kd + Ks) + 1);
-
-		Joint.ConstraintLambda[ConstraintIndex] += delta_lambda;
-
-		// dp = J_T * delta_lambda
-		Chaos::FVec3 dp = delta_lambda * Axis;
-
-		if (!b0.bStatic)
-		{
-			const Chaos::FVec3 dV0dt = b0.InvM * dp;
-			const Chaos::FVec3 dW0dt = Joint.InvIs[0] * (Joint.ConstraintArms[ConstraintIndex][0].Cross(dp));
-
-			b0.DP() -= dV0dt;
-			b0.DQ() -= dW0dt;
-		}
-		if (!b1.bStatic)
-		{
-			const Chaos::FVec3 dV1dt = b1.InvM * dp;
-			const Chaos::FVec3 dW1dt = Joint.InvIs[1] * (Joint.ConstraintArms[ConstraintIndex][1].Cross(dp));
-
-			b1.DP() += dV1dt;
-			b1.DQ() += dW1dt;
-		}
-#else
-		Chaos::FReal Cdot_x_h = Axis.Dot(v0 - v1) * Dt;
-		Chaos::FReal delta_lambda = (Ks * DeltaPosition - Kd * Cdot_x_h - total_lambda) / (k_hard * (Kd + Ks) + 1);
-		Joint.ConstraintLambda[ConstraintIndex] += delta_lambda;
-
-		// dp = J_T * delta_lambda
-		Chaos::FVec3 dp = delta_lambda * Axis;
-
-		if (!b0.bStatic)
-		{
-			const Chaos::FVec3 dV0dt = b0.InvM * dp;
-			const Chaos::FVec3 dW0dt = Joint.InvIs[0] * (Joint.ConstraintArms[ConstraintIndex][0].Cross(dp));
-
-			b0.DP() += dV0dt;
-			b0.DQ() += dW0dt;
-		}
-		if (!b1.bStatic)
-		{
-			const Chaos::FVec3 dV1dt = b1.InvM * dp;
-			const Chaos::FVec3 dW1dt = Joint.InvIs[1] * (Joint.ConstraintArms[ConstraintIndex][1].Cross(dp));
-
-			b1.DP() -= dV1dt;
-			b1.DQ() -= dW1dt;
-		}
-#endif
-	}
-}
-
-void ASoftJointConstraintTestActor::ApplyAxisVelocityConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint)
-{
-	if(!bSolveVelocity) return;
-
-	if (!bSolvePosition || FMath::Abs(Joint.ConstraintLambda[ConstraintIndex]) > UE_SMALL_NUMBER)
-	{
-		Chaos::FReal TargetVel = 0.0f;
-		/*if (Joint.ConstraintRestitution[ConstraintIndex] != 0.0f)
-		{
-			const FReal InitVel = InitConstraintAxisLinearVelocities[ConstraintIndex];
-			TargetVel = InitVel > Chaos_Joint_LinearVelocityThresholdToApplyRestitution ?
-				-PositionConstraints.ConstraintRestitution[ConstraintIndex] * InitVel : 0.0f;
-		}*/
-
-		if(bSoftVelocityConstraint)
-		{
-			SolveVelocityConstraintsSoft(Dt, ConstraintIndex, Joint);
-		}
-		else
-		{
-			SolveLinearVelocityConstraints(Dt, ConstraintIndex, Joint, TargetVel);
-		}
-	}
-}
-
-void ASoftJointConstraintTestActor::SolveLinearVelocityConstraints(float Dt, 
-	int32 ConstraintIndex, FJointSlovePair& Joint, const Chaos::FReal TargetVel)
-{
-	auto& b0 = Joint.Body(0);
-	auto& b1 = Joint.Body(1);
-
-	const Chaos::FVec3 CV0 = b0.V() + b0.W().Cross(Joint.ConstraintArms[ConstraintIndex][0]);
-	const Chaos::FVec3 CV1 = b1.V() + b1.W().Cross(Joint.ConstraintArms[ConstraintIndex][1]);
-	const Chaos::FVec3 CV = CV1 - CV0;
-	// K * DeltaLamda = -JV
-	const Chaos::FReal DeltaLambda = -(CV.Dot(Joint.ConstraintAxis[ConstraintIndex]) - TargetVel) / Joint.ConstraintHardIM[ConstraintIndex];
-
-	const Chaos::FVec3 MDV = DeltaLambda * Joint.ConstraintAxis[ConstraintIndex];
-
-	if (!b0.bStatic)
-	{
-		const Chaos::FVec3 DV0 = b0.InvM * MDV;
-		const Chaos::FVec3 DW0 = Joint.InvIs[0] * (Joint.ConstraintArms[ConstraintIndex][0].Cross(MDV));;
-
-		b0.V() -= DV0;
-		b0.W() -= DW0;
-	}
-	if (!b1.bStatic)
-	{
-		const Chaos::FVec3 DV1 = b1.InvM * MDV;
-		const Chaos::FVec3 DW1 = Joint.InvIs[1] * (Joint.ConstraintArms[ConstraintIndex][1].Cross(MDV));;
-
-		b1.V() += DV1;
-		b1.W() += DW1;
-	}
-}
-
-void ASoftJointConstraintTestActor::SolveVelocityConstraintsSoft(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint)
-{
-	if(!bSolveVelocity) return;
-
-	if(ConstraintIndex != INDEX_NONE)
-	{
-		auto& b0 = Joint.Body(0);
-		auto& b1 = Joint.Body(1);
-
-		const auto& Axis = Joint.ConstraintAxis[ConstraintIndex];
-
-		Chaos::FVec3 v0 = b0.V() + b0.W().Cross(Joint.ConstraintArms[ConstraintIndex][0]);
-		Chaos::FVec3 v1 = b1.V() + b1.W().Cross(Joint.ConstraintArms[ConstraintIndex][1]);
-
-		Chaos::FReal jv = Axis.Dot(v1 - v0);
-
-		// Lagrange multiplier is:
-		//
-		// lambda = -K^-1 (J v + b)
-		Chaos::FReal effective_mass = 1.0 / Joint.ConstraintSoftIM[ConstraintIndex];
-		float lambda = -effective_mass * (jv + Joint.SpingPart[ConstraintIndex].GetBias(Joint.ConstraintLambda[ConstraintIndex]));
-		Joint.ConstraintLambda[ConstraintIndex] += lambda; // Store accumulated impulse
-
-		// apply lambda
-		const Chaos::FVec3 dp = lambda * Axis;
-
-		if (!b0.bStatic)
-		{
-			const Chaos::FVec3 dV0 = b0.InvM * dp;
-			const Chaos::FVec3 dW0 = Joint.InvIs[0] * (Joint.ConstraintArms[ConstraintIndex][0].Cross(dp));
-
-			b0.V() -= dV0;
-			b0.W() -= dW0;
-		}
-		if (!b1.bStatic)
-		{
-			const Chaos::FVec3 dV1 = b1.InvM * dp;
-			const Chaos::FVec3 dW1 = Joint.InvIs[1] * (Joint.ConstraintArms[ConstraintIndex][1].Cross(dp));
-
-			b1.V() += dV1;
-			b1.W() += dW1;
-		}
-	}
 }

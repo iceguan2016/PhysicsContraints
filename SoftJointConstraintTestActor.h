@@ -141,7 +141,14 @@ struct FPSDESTRUCTION_API FJointSettings
 	UPROPERTY(EditAnywhere)
 	float AngleTolerance = 0.001;
 
-	int32 GetConstraintIndex() const;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSoftPositionConstraint = false;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSoftVelocityConstraint = false;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSolvePosition = false;
+	UPROPERTY(EditAnywhere, Category = Joint)
+	bool bSolveVelocity = true;
 };
 
 struct FRigidSloverData
@@ -304,6 +311,28 @@ struct FJointSlovePair
 
 	void InitPositionEffectiveMass(const int32 ConstraintIndex, const Chaos::FReal Dt);
 
+	void InitPlanarPositionConstraint(float Dt, const int32 AxisIndex);
+
+	void InitSphericalPositionConstraint(float Dt);
+
+	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex);
+
+	void SolvePositionConstraints(float Dt,
+		int32 ConstraintIndex,
+		const Chaos::FReal DeltaPosition);
+	void SolvePositionConstraintsSoft(float Dt,
+		int32 ConstraintIndex,
+		const Chaos::FReal DeltaPosition);
+
+	void ApplyAxisVelocityConstraint(float Dt,
+		int32 ConstraintIndex);
+	void SolveLinearVelocityConstraints(float Dt,
+		int32 ConstraintIndex,
+		const Chaos::FReal TargetVel);
+	void SolveVelocityConstraintsSoft(float Dt, int32 ConstraintIndex);
+
+	void ApplyCorrections();
+
 	/* -----Update at spawn joint----- */
 	// Local-space constraint settings
 	Chaos::FRigidTransform3 LocalConnectorXs[2];	// Local(CoM)-space joint connector transforms
@@ -364,50 +393,12 @@ public:
 	FJointSettings JointSettings;
 
 	UPROPERTY(EditAnywhere, Category = Joint)
-	bool bSoftPositionConstraint = false;
-	UPROPERTY(EditAnywhere, Category = Joint)
-	bool bSoftVelocityConstraint = false;
-	UPROPERTY(EditAnywhere, Category = Joint)
-	bool bSolvePosition = false;
-	UPROPERTY(EditAnywhere, Category = Joint)
-	bool bSolveVelocity = true;
-	UPROPERTY(EditAnywhere, Category = Joint)
 	int32 NumPositionIterations = 8;
 	UPROPERTY(EditAnywhere, Category = Joint)
 	int32 NumVelocityIterations = 1;
 
 protected:
 	void AdvanceOneStep(float Dt);
-
-	void ApplyAxisPositionConstraint(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint);
-	void SolvePositionConstraints(float Dt, 
-		int32 ConstraintIndex,
-		const Chaos::FReal DeltaPosition, 
-		FJointSlovePair& Joint);
-	void SolvePositionConstraintsSoft(float Dt,
-		int32 ConstraintIndex,
-		const Chaos::FReal DeltaPosition,
-		FJointSlovePair& Joint);
-
-	void ApplyAxisVelocityConstraint(float Dt,
-		int32 ConstraintIndex,
-		FJointSlovePair& Joint);
-	void SolveLinearVelocityConstraints(float Dt, 
-		int32 ConstraintIndex, 
-		FJointSlovePair& Joint,
-		const Chaos::FReal TargetVel);
-	void SolveVelocityConstraintsSoft(float Dt, int32 ConstraintIndex, FJointSlovePair& Joint);
-
-	void InitPlanarPositionConstraint(
-		float Dt, 
-		FJointSlovePair& Joint,
-		const int32 AxisIndex);
-
-	void InitSphericalPositionConstraint(
-		float Dt,
-		FJointSlovePair& Joint);
-
-	void ApplyCorrections(FJointSlovePair& Joint);
 
 private:
 	FRigidSolverDataContainer RigidSloverDataContainer;
