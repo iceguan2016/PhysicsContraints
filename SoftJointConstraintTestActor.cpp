@@ -682,7 +682,7 @@ void ASoftJointConstraintTestActor::SolvePositionConstraintsSoft(float Dt,
 		Chaos::FVec3 v1 = b1.V() + b1.W().Cross(Joint.ConstraintArms[ConstraintIndex][1]);
 
 #if 1
-		// Cdot*h = v_target*h - jv*h
+		// Cdot*h = Jv*h - v_target*h 
 		// v_target = 0
 		Chaos::FReal Cdot_x_h = Axis.Dot(v1 - v0) * Dt;
 
