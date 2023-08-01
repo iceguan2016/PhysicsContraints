@@ -681,15 +681,15 @@ void ASoftJointConstraintTestActor::SolvePositionConstraintsSoft(float Dt,
 		Chaos::FVec3 v0 = b0.V() + b0.W().Cross(Joint.ConstraintArms[ConstraintIndex][0]);
 		Chaos::FVec3 v1 = b1.V() + b1.W().Cross(Joint.ConstraintArms[ConstraintIndex][1]);
 
-#if 0
+#if 1
 		// Cdot*h = v_target*h - jv*h
 		// v_target = 0
 		Chaos::FReal Cdot_x_h = Axis.Dot(v1 - v0) * Dt;
 
 		// DeltaPosition = C2 + Cdelta
 
-		// (Khard*(Kd+Ks)+1)*delta_lambda = -(Ks*(C2 + Cdelta) + Kd*Cdot*h - Lambda1)
-		Chaos::FReal delta_lambda = -(Ks*DeltaPosition + Kd*Cdot_x_h - total_lambda) / (k_hard * (Kd + Ks) + 1);
+		// (Khard*(Kd+Ks)+1)*delta_lambda = -(Ks*(C2 + Cdelta) + Kd*Cdot*h + Lambda1)
+		Chaos::FReal delta_lambda = -(Ks*DeltaPosition + Kd*Cdot_x_h + total_lambda) / (k_hard * (Kd + Ks) + 1);
 
 		Joint.ConstraintLambda[ConstraintIndex] += delta_lambda;
 
