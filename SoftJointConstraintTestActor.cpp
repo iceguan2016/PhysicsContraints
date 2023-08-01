@@ -247,8 +247,11 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 	constexpr int32 NumPositionIterations = 8;
 	constexpr int32 NumVelocityIterations = 1;
 
+	++StepNum;
+
 	// Integrate
 	{
+		int32 Index = 0;
 		RigidSloverDataContainer.ForEach([&](FRigidSloverData& InSolverData) {
 			auto IntegratePositionAndRotation = [Dt](FRigidSloverData& InBody) {
 				// Apply gravity acceleration
@@ -263,15 +266,20 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 #endif
 			};
 
+			++Index;
 			// Integrate Position
 			if (!InSolverData.bStatic)
 			{
+				/*UE_LOG(LogTemp, Log, TEXT("StepNum:%d Index:%d P:%s, Q:%s, V:%s, W:%s"), 
+					StepNum, 
+					Index, 
+					*InSolverData.P().ToString(),
+					*InSolverData.Q().ToString(),
+					*InSolverData.V().ToString(),
+					*InSolverData.W().ToString());*/
+
 				IntegratePositionAndRotation(InSolverData);
 			}
-
-			// Initialize solver data
-			InSolverData.DP() = Chaos::FVec3::ZeroVector;
-			InSolverData.DQ() = Chaos::FVec3::ZeroVector;
 		});
 	}
 
@@ -306,6 +314,11 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 
 			// 6.Clear constraint lambda
 			Joint.ConstraintLambda[0] = Joint.ConstraintLambda[1] = Joint.ConstraintLambda[2] = 0;
+
+			// 7.Update Position and Rotation Tolerance
+			const Chaos::FReal ToleranceScale = FMath::Min(1.f, 60.f * 60.f * Dt * Dt);
+			Joint.PositionTolerance = ToleranceScale * Joint.JointSettings.PositionTolerance;
+			Joint.AngleTolerance = ToleranceScale * Joint.JointSettings.AngleTolerance;
 		}
 
 		for (int32 Itr = 0; Itr < NumPositionIterations; ++Itr)
@@ -348,6 +361,33 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 				for (int32 j = 0; j < 3; ++j)
 				{
 					ApplyAxisVelocityConstraint(Dt, j, Joint);
+				}
+			}
+
+			// Check
+			{
+				for (int32 i = 0; i < JointPairs.Num(); ++i)
+				{
+					auto& Joint = JointPairs[i];
+
+					auto& b0 = Joint.Body(0);
+					auto& b1 = Joint.Body(1);
+
+					for (int32 j = 0; j < 3; ++j)
+					{
+						if (FMath::Abs(Joint.ConstraintLambda[j]) > UE_SMALL_NUMBER)
+						{
+							const Chaos::FVec3 CV0 = b0.V() + b0.W().Cross(Joint.ConstraintArms[j][0]);
+							const Chaos::FVec3 CV1 = b1.V() + b1.W().Cross(Joint.ConstraintArms[j][1]);
+							const Chaos::FVec3 CV = CV1 - CV0;
+
+							Chaos::FReal Cdot = Joint.ConstraintAxis[j].Dot(CV);
+							if (!FMath::IsNearlyZero(Cdot))
+							{
+								int stop = 0;
+							}
+						}
+					}
 				}
 			}
 		}
@@ -396,7 +436,10 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 				auto p1 = b.P() + Joint.ConstraintArms[ConstraintIndex][bodyIndex];
 				//DrawDebugLine(World, p0, p1, c, false, -1, 0, 1.0f);
 
-				//DrawDebugBox(World, MtoCM(b.ConnectorX), FVector{2.0, 2.0f, 2.0f}, FQuat::Identity, c, false, -1, 0, 1.0f);
+				//DrawDebugBox(World, b.ConnectorX, FVector{2.0, 2.0f, 2.0f}, FQuat::Identity, c, false, -1, 0, 1.0f);
+
+				auto p2 = p0 + b.V();
+				DrawDebugLine(World, p0, p2, c, false, -1, 0, 1.0f);
 			};
 
 			FColor Color0 = FColor::Red;
@@ -404,18 +447,6 @@ void ASoftJointConstraintTestActor::DebugDraw(float Dt)
 
 			DebugDrawBody(0, b0, Color0);
 			DebugDrawBody(1, b1, Color1);
-
-			auto dp = Joint.SolvePositionDeltaLambda[ConstraintIndex] * Joint.ConstraintAxis[ConstraintIndex];
-			if(!b0.bStatic)
-			{
-				const Chaos::FVec3 dV0dt = b0.InvM * dp;
-				DrawDebugLine(World, Joint.ConnectorXs[0], Joint.ConnectorXs[0] - dV0dt, Color0, false, -1, 0, 1.0f);
-			}
-			if (!b1.bStatic)
-			{
-				const Chaos::FVec3 dV1dt = b1.InvM * dp;
-				DrawDebugLine(World, Joint.ConnectorXs[1], Joint.ConnectorXs[1] + dV1dt, Color1, false, -1, 0, 1.0f);
-			}
 
 			DrawDebugLine(World, Joint.ConnectorXs[0], Joint.ConnectorXs[1], FColor::Blue, false, -1, 0, 1.0f);
 
@@ -461,7 +492,7 @@ void ASoftJointConstraintTestActor::ApplyAxisPositionConstraint(float Dt, int32 
 		NeedsSolve = true;
 	}
 
-	if(NeedsSolve)
+	if(NeedsSolve && FMath::Abs(DeltaPosition) > Joint.PositionTolerance)
 	{
 		if(bSoftPositionConstraint)
 		{
@@ -539,6 +570,8 @@ void ASoftJointConstraintTestActor::ApplyCorrections(FJointSlovePair& Joint)
 	auto ApplyCorrection = [&Joint](int BodyIndex) {
 		Joint.Body(BodyIndex).P() = Joint.P(BodyIndex);
 		Joint.Body(BodyIndex).Q() = Joint.Q(BodyIndex);
+		Joint.Body(BodyIndex).DP() = Chaos::FVec3::ZeroVector;
+		Joint.Body(BodyIndex).DQ() = Chaos::FVec3::ZeroVector;
 	};
 
 	ApplyCorrection(0);
@@ -560,7 +593,6 @@ void ASoftJointConstraintTestActor::SolvePositionConstraints(float Dt,
 		auto delta_lambda = -effective_mass * C;
 	
 		Joint.ConstraintLambda[ConstraintIndex] += delta_lambda;
-		Joint.SolvePositionDeltaLambda[ConstraintIndex] = delta_lambda;
 		
 		auto dp = delta_lambda * Joint.ConstraintAxis[ConstraintIndex];
 

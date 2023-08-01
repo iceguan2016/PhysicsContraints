@@ -135,6 +135,12 @@ struct FPSDESTRUCTION_API FJointSettings
 	UPROPERTY(EditAnywhere)
 	float DampingRatio = 0.0f;
 
+	UPROPERTY(EditAnywhere)
+	float PositionTolerance = 0.025f;
+
+	UPROPERTY(EditAnywhere)
+	float AngleTolerance = 0.001;
+
 	int32 GetConstraintIndex() const;
 };
 
@@ -309,7 +315,6 @@ struct FJointSlovePair
 	Chaos::FRotation3		CurrentQs[2];	// Rotations at the beginning of the iteration
 	// dims0: ConstraintIndex, dims1: BodyIndex? 
 	Chaos::FVec3			ConstraintArms[3][2]; // World-space constraint arm
-	/* -----End-------------------------------------- */
 
 	// World-space constraint settings
 	Chaos::FVec3 ConnectorXs[2];			// World-space joint connector positions
@@ -321,10 +326,14 @@ struct FJointSlovePair
 	Chaos::FVec3 ConstraintHardIM; // K = JM^-1J^T with constraint axis
 	Chaos::FVec3 ConstraintSoftIM;
 	Chaos::FVec3 ConstraintCX = Chaos::FVec3::ZeroVector;
-	Chaos::FVec3 SolveVelocityDeltaLambda = Chaos::FVec3::ZeroVector;
-	Chaos::FVec3 SolvePositionDeltaLambda = Chaos::FVec3::ZeroVector;
 
-	Chaos::FReal ConstraintLambda[3] = {0};
+	Chaos::FReal ConstraintLambda[3] = { 0 };
+
+	// Tolerances below which we stop solving
+	Chaos::FReal PositionTolerance;					// Distance error below which we consider a constraint or drive solved
+	Chaos::FReal AngleTolerance;						// Angle error below which we consider a constraint or drive solved
+	/* -----End-------------------------------------- */
+	
 
 	FSpringPart SpingPart;
 
@@ -398,4 +407,6 @@ private:
 
 	UPROPERTY()
 	TArray<FJointSlovePair> JointPairs;
+
+	int StepNum = 0;
 };
