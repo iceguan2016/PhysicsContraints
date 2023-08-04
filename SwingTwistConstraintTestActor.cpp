@@ -9,6 +9,8 @@ void ASwingTwistConstraintTestActor::InitSwingTwistLimit(const FTransform& InBod
 	PlaneAxis1 = PlaneAxis2 = InConnect.TransformVector(FVector::UnitY());
 
 	FVector normal_axis1 = PlaneAxis1.Cross(TwistAxis1);
+	// When constructing the c_to_b1 matrix here, the y and z axes are exchanged, as follows:
+	// x' <- x   y' <- -z   z' <- y
 	FMatrix c_to_b1(TwistAxis1, normal_axis1, PlaneAxis1, FVector::ZeroVector);
 	mConstraintToBody1 = c_to_b1.Rotator().Quaternion();
 	mLocalSpacePosition1 = InBody1.GetLocation();
