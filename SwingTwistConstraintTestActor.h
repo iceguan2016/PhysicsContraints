@@ -5,7 +5,7 @@
 #include "SwingTwistConstraintTestActor.generated.h"
 
 UCLASS(Blueprintable, BlueprintType)
-class FPSDESTRUCTION_API ASwingTwistConstraintTestActor : public AActor
+class ASwingTwistConstraintTestActor : public AActor
 {
 	GENERATED_BODY()
 

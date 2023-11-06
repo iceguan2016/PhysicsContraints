@@ -1,6 +1,7 @@
 #include "SoftJointConstraintTestActor.h"
 #include "Components/BoxComponent.h"
 #include "Chaos/Utilities.h"
+#include "Chaos/Rotation.h"
 
 /* -----FRigidSloverHandle----- */
 FRigidSloverData* FRigidSolverDataContainer::FRigidSloverHandle::Get()

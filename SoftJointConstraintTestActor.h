@@ -122,7 +122,7 @@ private:
 };
 
 USTRUCT()
-struct FPSDESTRUCTION_API FJointSettings
+struct FJointSettings
 {
 	GENERATED_BODY()
 
@@ -370,7 +370,7 @@ struct FJointSlovePair
 };
 
 UCLASS(Blueprintable, BlueprintType)
-class FPSDESTRUCTION_API ASoftJointConstraintTestActor : public AActor
+class ASoftJointConstraintTestActor : public AActor
 {
 	GENERATED_BODY()
 
