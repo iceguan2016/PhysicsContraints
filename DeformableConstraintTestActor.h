@@ -109,6 +109,11 @@ public:
 		float &InLamada
 	)
 	{
+		// clamp damping, 确保weighted_sum_of_gradients >> alpha_tilde(暂定差2个数量级)，防止模拟爆炸
+		const auto dt = 1.0 / 60;
+		const auto max_dumping = (MaxInvmass * 1e-2) * dt * dt;
+		const auto dumping = FMath::Min(InDamping, max_dumping);
+		
 		FEdgeContraintPositionData OutPositions = InPositions;
 
 		auto p0 = InPositions.Get<0>();
@@ -123,7 +128,10 @@ public:
 		float C = Distance - InInitLength;
 		
 		const auto weighted_sum_of_gradients = w0 + w1;
-		const auto alpha_tilde = InDamping / (InDt * InDt);
+		const auto alpha_tilde = dumping / (InDt * InDt);
+		// weighted_sum_of_gradients和alpha_tilde要控制在一个数量级上才不会出现模拟爆掉
+		// 如果alpha_tilde  >> weighted_sum_of_gradients, 就很容易爆掉
+		// invmass在100左右 dt为1/60=0.016，InDamping的取值为100*dt*dt=0.0256
 		const auto delta_lamada = - (C + alpha_tilde * InLamada) / (weighted_sum_of_gradients + alpha_tilde);
 
 		InLamada += delta_lamada;
@@ -147,7 +155,8 @@ public:
 		const double timestep,
 		const int32 iterations,
 		const int32 substeps,
-		const float damping,
+		const float volume_damping,
+		const float edge_damping,
 		const bool is_volume_constraint = true,
 		const bool is_edge_constraint = true)
 	{
@@ -197,7 +206,7 @@ public:
 						const auto init_edge_length = init_edge_lengths[j];
 
 						auto out_positions = ProjectSingleDistanceConstraintDamping(
-							damping, init_edge_length, position_data, invmass_data, dt, edge_lamada[j]);
+							edge_damping, init_edge_length, position_data, invmass_data, dt, edge_lamada[j]);
 
 						pos[id0] = out_positions.Get<0>();
 						pos[id1] = out_positions.Get<1>();
@@ -223,7 +232,7 @@ public:
 						const float init_volume = init_tet_volumes[j];
 
 						auto out_positions = ProjectSingleVolumeConstraintDamping(
-							damping, init_volume, position_data, invmass_data, dt, volume_lamada[j]);
+							volume_damping, init_volume, position_data, invmass_data, dt, volume_lamada[j]);
 
 						pos[id0] = out_positions.Get<0>();
 						pos[id1] = out_positions.Get<1>();
@@ -261,9 +270,9 @@ public:
 			auto &p1 = pos[id1];
 			auto & p2 = pos[id2];
 
-			DrawDebugLine(InWorld, p0, p1, FColor::Black, false, -1, 0, 1.0f);
-			DrawDebugLine(InWorld, p1, p2, FColor::Black, false, -1, 0, 1.0f);
-			DrawDebugLine(InWorld, p2, p0, FColor::Black, false, -1, 0, 1.0f);
+			DrawDebugLine(InWorld, p0, p1, FColor::Red, false, -1, 0, 1.0f);
+			DrawDebugLine(InWorld, p1, p2, FColor::Red, false, -1, 0, 1.0f);
+			DrawDebugLine(InWorld, p2, p0, FColor::Red, false, -1, 0, 1.0f);
 		}
 
 		auto Center = simulate_bounds.GetCenter();
@@ -339,6 +348,15 @@ protected:
 			pos_inv_mass[id3] += inv_mass;
 		}
 
+		MaxInvmass = 0;
+		for (auto i = 0; i < vert_num; ++i)
+		{
+			if(pos_inv_mass[i] > MaxInvmass)
+			{
+				MaxInvmass = pos_inv_mass[i];
+			}
+		}
+
 		for (int32 i = 0; i < edge_num; i++) 
 		{
 			int32 edge_vert_offset = i * 2;
@@ -383,6 +401,8 @@ protected:
 	TArray<float>	volume_lamada;
 	TArray<float>	edge_lamada;
 
+	float MaxInvmass = 0;
+
 	// for debug
 	FBox simulate_bounds;
 };
@@ -422,7 +442,10 @@ public:
 	bool bEnableEdgeConstraintSolve = true;
 
 	UPROPERTY(EditAnywhere)
-	float SolveDumping = 0.0f;
+	float SolveVolumeDumping = 0.0f;
+
+	UPROPERTY(EditAnywhere)
+	float SolveEdgeDumping = 0.0f;
 
 protected:
 	FDeformableMeshPtr DeformableMesh;

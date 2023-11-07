@@ -623,7 +623,13 @@ void ADeformableConstraintTestActor::Simulate(float DeltaSeconds)
 
 		if(bEnableSolve)
 		{
-			DeformableMesh->Solve(dt, num_iterations, substeps, SolveDumping, bEnableVolumeConstraintSolve, bEnableEdgeConstraintSolve);
+			DeformableMesh->Solve(
+				dt, num_iterations, 
+				substeps, 
+				SolveVolumeDumping,
+				SolveEdgeDumping,
+				bEnableVolumeConstraintSolve, 
+				bEnableEdgeConstraintSolve);
 		}
 	}
 }
