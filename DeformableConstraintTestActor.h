@@ -129,9 +129,8 @@ public:
 		
 		const auto weighted_sum_of_gradients = w0 + w1;
 		const auto alpha_tilde = dumping / (InDt * InDt);
-		// weighted_sum_of_gradients和alpha_tilde要控制在一个数量级上才不会出现模拟爆掉
-		// 如果alpha_tilde  >> weighted_sum_of_gradients, 就很容易爆掉
-		// invmass在100左右 dt为1/60=0.016，InDamping的取值为100*dt*dt=0.0256
+		// 只有weighted_sum_of_gradients >> alpha_tilde才不会出现模拟爆掉
+		// 比如invmass在100左右 dt为1/60=0.016，InDamping的取值为100*dt*dt=0.0256
 		const auto delta_lamada = - (C + alpha_tilde * InLamada) / (weighted_sum_of_gradients + alpha_tilde);
 
 		InLamada += delta_lamada;
