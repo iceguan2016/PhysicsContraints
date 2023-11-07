@@ -9,15 +9,15 @@ class FDeformableMesh
 public:
 	struct FTetModel
 	{
-		TArray<FVector> verts;
+		TArray<float>	verts;
 		TArray<int32>	tet_indics;
 		TArray<int32>	tet_edge_indics;
 		TArray<int32>	tet_surf_tri_indics;
 	};
-	FDeformableMesh(const FTetModel& InTetModel)
-		: tet_model(InTetModel)
+	FDeformableMesh(FTetModel& InTetModel, const FTransform& InWorldTransform, const FBox& InSimulateBounds)
+		: tet_model(MoveTemp(InTetModel)), simulate_bounds(InSimulateBounds)
 	{
-
+		InitPhysics(InWorldTransform);
 	}
 
 	const FTetModel& GetTetModel() const { return tet_model; }
@@ -30,7 +30,8 @@ public:
 		const float InInitVolume,
 		const FVolumeConstraintPositionData& InPositions,
 		const FVolumeConstraintInvMassData& InInvMass,
-		const float InDt
+		const float InDt,
+		float &InLamada
 	)
 	{
 		FVolumeConstraintPositionData OutPositions = InPositions;
@@ -48,9 +49,22 @@ public:
 		float Vol = GetTetVolume(InPositions);
 		float C = Vol - InInitVolume;
 
-		const auto grad0 = (1. / 6.) * (p1 - p2).Cross(p3 - p2);
+		int32 volIdOrder[][3] =
+		{ 
+			{1, 3, 2}, 
+			{0, 2, 3}, 
+			{0, 3, 1}, 
+			{0, 1, 2}
+		};
+
+		/*const auto grad0 = (1. / 6.) * (p1 - p2).Cross(p3 - p2);
 		const auto grad1 = (1. / 6.) * (p2 - p0).Cross(p3 - p0);
 		const auto grad2 = (1. / 6.) * (p0 - p1).Cross(p3 - p1);
+		const auto grad3 = (1. / 6.) * (p1 - p0).Cross(p2 - p0);*/
+
+		const auto grad0 = (1. / 6.) * (p3 - p1).Cross(p2 - p1);
+		const auto grad1 = (1. / 6.) * (p2 - p0).Cross(p3 - p0);
+		const auto grad2 = (1. / 6.) * (p3 - p0).Cross(p1 - p0);
 		const auto grad3 = (1. / 6.) * (p1 - p0).Cross(p2 - p0);
 
 		auto const weighted_sum_of_gradients = w0 * grad0.SizeSquared() + w1 * grad1.SizeSquared() +
@@ -60,12 +74,26 @@ public:
 			return OutPositions;
 
 		const auto alpha_tilde = InDamping / (InDt * InDt);
-		const auto delta_lamada = - C / (weighted_sum_of_gradients + alpha_tilde);
+		const auto delta_lamada = - (C + alpha_tilde * InLamada) / (weighted_sum_of_gradients + alpha_tilde);
+
+		InLamada += delta_lamada;
 
 		OutPositions.Get<0>() += w0 * grad0 * delta_lamada;
 		OutPositions.Get<1>() += w1 * grad1 * delta_lamada;
 		OutPositions.Get<2>() += w2 * grad2 * delta_lamada;
 		OutPositions.Get<3>() += w3 * grad3 * delta_lamada;
+
+		float Vol2 = GetTetVolume(OutPositions);
+		float C2 = Vol2 - InInitVolume;
+		if (FMath::Abs(C2) > FMath::Abs(C))
+		{
+			int stop = 0;
+		}
+
+		IsInSimulateBounds(OutPositions.Get<0>());
+		IsInSimulateBounds(OutPositions.Get<1>());
+		IsInSimulateBounds(OutPositions.Get<2>());
+		IsInSimulateBounds(OutPositions.Get<3>());
 
 		return OutPositions;
 	}
@@ -77,7 +105,8 @@ public:
 		const float InInitLength,
 		const FEdgeContraintPositionData& InPositions,
 		const FEdgeContraintInvMassData& InInvMass,
-		const float InDt
+		const float InDt,
+		float &InLamada
 	)
 	{
 		FEdgeContraintPositionData OutPositions = InPositions;
@@ -95,10 +124,21 @@ public:
 		
 		const auto weighted_sum_of_gradients = w0 + w1;
 		const auto alpha_tilde = InDamping / (InDt * InDt);
-		const auto delta_lamada = - C / (weighted_sum_of_gradients + alpha_tilde);
+		const auto delta_lamada = - (C + alpha_tilde * InLamada) / (weighted_sum_of_gradients + alpha_tilde);
 
+		InLamada += delta_lamada;
 		OutPositions.Get<0>() += w0 * n * delta_lamada;
 		OutPositions.Get<1>() += w1 * -n * delta_lamada;
+
+		float Distance2 = FVector::Distance(OutPositions.Get<0>(), OutPositions.Get<1>());
+		float C2 = Distance2 - InInitLength;
+		if (FMath::Abs(C2) > FMath::Abs(C))
+		{
+			int stop = 0;
+		}
+
+		IsInSimulateBounds(OutPositions.Get<0>());
+		IsInSimulateBounds(OutPositions.Get<1>());
 
 		return OutPositions;
 	}
@@ -107,7 +147,9 @@ public:
 		const double timestep,
 		const int32 iterations,
 		const int32 substeps,
-		const float damping)
+		const float damping,
+		const bool is_volume_constraint = true,
+		const bool is_edge_constraint = true)
 	{
 		const auto gravity = FVector(0.0f, 0.0f, -980.0f);
 
@@ -123,53 +165,71 @@ public:
 			for (auto m = 0; m < num_vertices; ++m)
 			{
 				vel[m] += gravity * dt;
-				pos[m] += vel[m];
+				pos[m] += vel[m] * dt;
+
+				// simple handle collision
+				if (pos[m].Z < 0.0)
+				{
+					pos[m] = prev_pos[m];
+					pos[m].Z = 0;
+				}
 			}
+
+			for (auto m = 0; m < volume_lamada.Num(); ++m) volume_lamada[m] = 0;
+			for (auto m = 0; m < edge_lamada.Num(); ++m) edge_lamada[m] = 0;
 
 			// sequential gauss seidel type solve
 			for (auto n = 0; n < num_iterations; ++n)
 			{
-				// volume constraints
-				for (auto j = 0; j < num_volume_constraints; ++j)
+				// edge constraints
+				if (is_edge_constraint)
 				{
-					auto index_tet = j * 4;
+					for (auto j = 0; j < num_edge_constraints; ++j)
+					{
+						auto edge_vert_offset = j * 2;
 
-					auto id0 = tet_model.tet_indics[index_tet + 0];
-					auto id1 = tet_model.tet_indics[index_tet + 1];
-					auto id2 = tet_model.tet_indics[index_tet + 2];
-					auto id3 = tet_model.tet_indics[index_tet + 3];
+						auto id0 = tet_model.tet_edge_indics[edge_vert_offset + 0];
+						auto id1 = tet_model.tet_edge_indics[edge_vert_offset + 1];
 
-					FVolumeConstraintPositionData position_data(
-						pos[id0], pos[id1], pos[id2], pos[id3]);
-					FVolumeConstraintInvMassData invmass_data(
-						pos_inv_mass[id0], pos_inv_mass[id1], pos_inv_mass[id2], pos_inv_mass[id3]);
-					const float init_volume = init_tet_volumes[index_tet];
+						FEdgeContraintPositionData position_data(pos[id0], pos[id1]);
+						FEdgeContraintInvMassData invmass_data(pos_inv_mass[id0], pos_inv_mass[id1]);
 
-					auto out_positions = ProjectSingleVolumeConstraintDamping(damping, init_volume, position_data, invmass_data, dt);
+						const auto init_edge_length = init_edge_lengths[j];
 
-					pos[id0] = out_positions.Get<0>();
-					pos[id1] = out_positions.Get<1>();
-					pos[id2] = out_positions.Get<2>();
-					pos[id3] = out_positions.Get<3>();
+						auto out_positions = ProjectSingleDistanceConstraintDamping(
+							damping, init_edge_length, position_data, invmass_data, dt, edge_lamada[j]);
+
+						pos[id0] = out_positions.Get<0>();
+						pos[id1] = out_positions.Get<1>();
+					}
 				}
 
-				// edge constraints
-				for (auto j = 0; j < num_edge_constraints; ++j)
+				// volume constraints
+				if (is_volume_constraint)
 				{
-					auto index_edge = j * 2;
+					for (auto j = 0; j < num_volume_constraints; ++j)
+					{
+						auto tet_vert_offset = j * 4;
 
-					auto id0 = tet_model.tet_edge_indics[index_edge + 0];
-					auto id1 = tet_model.tet_edge_indics[index_edge + 1];
+						auto id0 = tet_model.tet_indics[tet_vert_offset + 0];
+						auto id1 = tet_model.tet_indics[tet_vert_offset + 1];
+						auto id2 = tet_model.tet_indics[tet_vert_offset + 2];
+						auto id3 = tet_model.tet_indics[tet_vert_offset + 3];
 
-					FEdgeContraintPositionData position_data(pos[id0], pos[id1]);
-					FEdgeContraintInvMassData invmass_data(pos_inv_mass[id0], pos_inv_mass[id1]);
+						FVolumeConstraintPositionData position_data(
+							pos[id0], pos[id1], pos[id2], pos[id3]);
+						FVolumeConstraintInvMassData invmass_data(
+							pos_inv_mass[id0], pos_inv_mass[id1], pos_inv_mass[id2], pos_inv_mass[id3]);
+						const float init_volume = init_tet_volumes[j];
 
-					const auto init_edge_length = init_edge_lengths[index_edge];
+						auto out_positions = ProjectSingleVolumeConstraintDamping(
+							damping, init_volume, position_data, invmass_data, dt, volume_lamada[j]);
 
-					auto out_positions = ProjectSingleDistanceConstraintDamping(damping, init_edge_length, position_data, invmass_data, dt);
-
-					pos[id0] = out_positions.Get<0>();
-					pos[id1] = out_positions.Get<1>();
+						pos[id0] = out_positions.Get<0>();
+						pos[id1] = out_positions.Get<1>();
+						pos[id2] = out_positions.Get<2>();
+						pos[id3] = out_positions.Get<3>();
+					}
 				}
 			}
 
@@ -180,6 +240,35 @@ public:
 				prev_pos[i] = pos[i];
 			}
 		}
+	}
+
+	void Render(UWorld* InWorld)
+	{
+		if (!InWorld) return;
+
+		int32 num_surf_tri = tet_model.tet_surf_tri_indics.Num() / 3;
+
+		DrawDebugMesh(InWorld, pos, tet_model.tet_surf_tri_indics, FColor(0x99, 0xff, 0xcc), false, -1, 0);
+
+		for (auto i = 0; i < num_surf_tri; ++i)
+		{
+			auto tri_vert_offset = i * 3;
+			auto id0 = tet_model.tet_surf_tri_indics[tri_vert_offset + 0];
+			auto id1 = tet_model.tet_surf_tri_indics[tri_vert_offset + 1];
+			auto id2 = tet_model.tet_surf_tri_indics[tri_vert_offset + 2];
+
+			auto &p0 = pos[id0];
+			auto &p1 = pos[id1];
+			auto & p2 = pos[id2];
+
+			DrawDebugLine(InWorld, p0, p1, FColor::Black, false, -1, 0, 1.0f);
+			DrawDebugLine(InWorld, p1, p2, FColor::Black, false, -1, 0, 1.0f);
+			DrawDebugLine(InWorld, p2, p0, FColor::Black, false, -1, 0, 1.0f);
+		}
+
+		auto Center = simulate_bounds.GetCenter();
+		auto HalfExtent = simulate_bounds.GetExtent();
+		DrawDebugBox(InWorld, Center, HalfExtent, FQuat::Identity, FColor::Green, false, -1, 0, 2.0f);
 	}
 
 protected:
@@ -194,49 +283,89 @@ protected:
 		return FMath::Abs(vol);
 	}
 
-	bool InitPhysics()
+	bool InitPhysics(const FTransform& InWorldTransform)
 	{
-		int32 vert_num = tet_model.verts.Num();
+		constexpr Chaos::FReal Density = 0.001; // kg/cm^3
+
+		int32 vert_num = tet_model.verts.Num() / 3;
 		int32 tet_num = tet_model.tet_indics.Num() / 4;
 		int32 edge_num = tet_model.tet_edge_indics.Num() / 2;
-		int32 tri_num = tet_model.tet_surf_tri_indics.Num() / 2;
+		int32 tri_num = tet_model.tet_surf_tri_indics.Num() / 3;
 
 		init_tet_volumes.SetNum(tet_num);
 		init_edge_lengths.SetNum(edge_num);
 		pos_inv_mass.SetNum(vert_num);
 
-		pos = tet_model.verts;
-		prev_pos = tet_model.verts;
+		pos.Empty(vert_num);
+		prev_pos.Empty(vert_num);
+		for (auto i = 0; i < vert_num; ++i)
+		{
+			FVector local_pos(tet_model.verts[i*3 + 0], tet_model.verts[i * 3 + 1], tet_model.verts[i * 3 + 2]);
+			// convert cm to m
+			local_pos *= 100.0;
+			// convert to world position
+			FVector world_pos = InWorldTransform.TransformPosition(local_pos);
+			pos.Add(world_pos);
+			prev_pos.Add(world_pos);
+		}
 
 		vel.SetNumZeroed(vert_num);
+
+		volume_lamada.SetNumZeroed(tet_num);
+		edge_lamada.SetNumZeroed(edge_num);
 
 
 		for (int32 i = 0; i < tet_num; i++) 
 		{
-			int32 tet_index = i * 4;
+			int32 tet_vert_offset = i * 4;
+			int32 id0 = tet_model.tet_indics[tet_vert_offset + 0];
+			int32 id1 = tet_model.tet_indics[tet_vert_offset + 1];
+			int32 id2 = tet_model.tet_indics[tet_vert_offset + 2];
+			int32 id3 = tet_model.tet_indics[tet_vert_offset + 3];
+
 			FVolumeConstraintPositionData tet_positions(
-				tet_model.verts[tet_index + 0],
-				tet_model.verts[tet_index + 1],
-				tet_model.verts[tet_index + 2],
-				tet_model.verts[tet_index + 3]
+				pos[id0],
+				pos[id1],
+				pos[id2],
+				pos[id3]
 			);
 
 			float Vol = GetTetVolume(tet_positions);
 			init_tet_volumes[i] = Vol;
-			float inv_mass = Vol > 0.0f? 1.0f / (Vol / 4.0f) : 0.0f;
-			pos_inv_mass[tet_index + 0] += inv_mass;
-			pos_inv_mass[tet_index + 1] += inv_mass;
-			pos_inv_mass[tet_index + 2] += inv_mass;
-			pos_inv_mass[tet_index + 3] += inv_mass;
+			float inv_mass = Vol > 0.0f? 1.0f / ((Vol* Density) / 4.0f) : 0.0f;
+			pos_inv_mass[id0] += inv_mass;
+			pos_inv_mass[id1] += inv_mass;
+			pos_inv_mass[id2] += inv_mass;
+			pos_inv_mass[id3] += inv_mass;
 		}
 
 		for (int32 i = 0; i < edge_num; i++) 
 		{
-			int32 edge_index = i * 2;
-			int32 id0 = tet_model.tet_edge_indics[edge_index + 0];
-			int32 id1 = tet_model.tet_edge_indics[edge_index + 1];
-			init_edge_lengths[edge_index] = FVector::Distance(tet_model.verts[id0], tet_model.verts[id1]);
+			int32 edge_vert_offset = i * 2;
+			int32 id0 = tet_model.tet_edge_indics[edge_vert_offset + 0];
+			int32 id1 = tet_model.tet_edge_indics[edge_vert_offset + 1];
+
+			init_edge_lengths[i] = FVector::Distance(pos[id0], pos[id1]);
 		}
+
+		return true;
+	}
+
+	bool IsInSimulateBounds(const FVector& p) const
+	{
+		auto center = simulate_bounds.GetCenter();
+		auto half_extent = simulate_bounds.GetExtent();
+
+		auto half_p = p - center;
+		bool is_in_bounds = FMath::Abs(half_p.X) < half_extent.X &&
+							FMath::Abs(half_p.Y) < half_extent.Y &&
+							FMath::Abs(half_p.Z) < half_extent.Z;
+		if(!is_in_bounds)
+		{
+			int stop = 0;
+		}
+
+		return is_in_bounds;
 	}
 
 protected:
@@ -247,10 +376,15 @@ protected:
 	TArray<float> init_edge_lengths;
 
 	// dynamic
-	TArray<float> pos_inv_mass;
+	TArray<float>	pos_inv_mass;
 	TArray<FVector> pos;
 	TArray<FVector> prev_pos;
 	TArray<FVector> vel;
+	TArray<float>	volume_lamada;
+	TArray<float>	edge_lamada;
+
+	// for debug
+	FBox simulate_bounds;
 };
 
 UCLASS(Blueprintable, BlueprintType)
@@ -259,4 +393,37 @@ class ADeformableConstraintTestActor : public AActor
 	GENERATED_BODY()
 
 public:
+	ADeformableConstraintTestActor();
+
+	using FDeformableMeshPtr = TSharedPtr<FDeformableMesh>;
+	FDeformableMeshPtr CreateDeformableMesh();
+
+	virtual void BeginPlay() override;
+
+	UFUNCTION(BlueprintCallable)
+	void Simulate(float DeltaSeconds);
+
+	UFUNCTION(BlueprintCallable)
+	void Render();
+
+	UPROPERTY(EditAnywhere)
+	FTransform TetWorldTransform;
+
+	UPROPERTY(EditAnywhere)
+	FVector	SimulateBoxExtent { 100, 100, 100};
+
+	UPROPERTY(EditAnywhere)
+	bool bEnableSolve = true;
+
+	UPROPERTY(EditAnywhere)
+	bool bEnableVolumeConstraintSolve = true;
+
+	UPROPERTY(EditAnywhere)
+	bool bEnableEdgeConstraintSolve = true;
+
+	UPROPERTY(EditAnywhere)
+	float SolveDumping = 0.0f;
+
+protected:
+	FDeformableMeshPtr DeformableMesh;
 };
