@@ -111,7 +111,7 @@ public:
 	{
 		// clamp damping, 确保weighted_sum_of_gradients >> alpha_tilde(暂定差2个数量级)，防止模拟爆炸
 		const auto dt = 1.0 / 60;
-		const auto max_dumping = (MaxInvmass * 1e-2) * dt * dt;
+		const auto max_dumping = (MaxInvmass * 2 * 1e-2) * dt * dt;
 		const auto dumping = FMath::Min(InDamping, max_dumping);
 		
 		FEdgeContraintPositionData OutPositions = InPositions;
