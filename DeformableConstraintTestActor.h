@@ -111,7 +111,7 @@ public:
 	{
 		// clamp damping, 确保weighted_sum_of_gradients >> alpha_tilde(暂定差2个数量级)，防止模拟爆炸
 		const auto dt = 1.0 / 60;
-		const auto max_dumping = (MaxInvmass * 2 * 1e-2) * dt * dt;
+		const auto max_dumping = (max_invmass * 2 * 1e-4) * dt * dt;
 		const auto dumping = FMath::Min(InDamping, max_dumping);
 		
 		FEdgeContraintPositionData OutPositions = InPositions;
@@ -323,6 +323,7 @@ protected:
 		edge_lamada.SetNumZeroed(edge_num);
 
 
+		float total_volume = 0;
 		for (int32 i = 0; i < tet_num; i++) 
 		{
 			int32 tet_vert_offset = i * 4;
@@ -338,22 +339,30 @@ protected:
 				pos[id3]
 			);
 
-			float Vol = GetTetVolume(tet_positions);
-			init_tet_volumes[i] = Vol;
-			float inv_mass = Vol > 0.0f? 1.0f / ((Vol* Density) / 4.0f) : 0.0f;
+			float vol = GetTetVolume(tet_positions);
+			init_tet_volumes[i] = vol;
+			float inv_mass = vol > 0.0f? 1.0f / ((vol* Density) / 4.0f) : 0.0f;
 			pos_inv_mass[id0] += inv_mass;
 			pos_inv_mass[id1] += inv_mass;
 			pos_inv_mass[id2] += inv_mass;
 			pos_inv_mass[id3] += inv_mass;
+
+			total_volume += vol;
 		}
 
-		MaxInvmass = 0;
+		max_invmass = 0;
+		avg_invmass = 0;
 		for (auto i = 0; i < vert_num; ++i)
 		{
-			if(pos_inv_mass[i] > MaxInvmass)
+			if(pos_inv_mass[i] > max_invmass)
 			{
-				MaxInvmass = pos_inv_mass[i];
+				max_invmass = pos_inv_mass[i];
 			}
+		}
+
+		if(tet_num > 0)
+		{
+			avg_invmass = 1.0 / ((total_volume * Density) / tet_num);
 		}
 
 		for (int32 i = 0; i < edge_num; i++) 
@@ -400,7 +409,8 @@ protected:
 	TArray<float>	volume_lamada;
 	TArray<float>	edge_lamada;
 
-	float MaxInvmass = 0;
+	float max_invmass = 0;
+	float avg_invmass = 0;
 
 	// for debug
 	FBox simulate_bounds;
