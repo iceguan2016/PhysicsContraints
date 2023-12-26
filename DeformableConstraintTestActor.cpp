@@ -585,13 +585,70 @@ int32 tetSurfaceTriIds[] = {
 	308, 312, 312, 292, 316, 297, 312, 316
 };
 
+float verts2[] = {
+- 0.5, - 0.5, + 0.5,
++ 0.5, - 0.5, + 0.5,
++ 0.5, - 0.5, - 0.5,
+- 0.5, - 0.5, - 0.5,
+- 0.5, + 0.5, + 0.5,
++ 0.5, + 0.5, + 0.5,
++ 0.5, + 0.5, - 0.5,
+- 0.5, + 0.5, - 0.5,
+};
+
+int32 tetSurfaceTriIds2[] = {
+1, 0, 2,
+0, 1, 5,
+3, 2, 0,
+3, 0, 7,
+4, 0, 5,
+4, 7, 0,
+6, 1, 2,
+5, 1, 6,
+3, 6, 2,
+6, 3, 7,
+4, 5, 6,
+7, 4, 6,
+};
+
+int32 tetIds2[] = {
+2, 6, 0, 1,
+6, 5, 0, 1,
+6, 0, 4, 7,
+6, 5, 4, 0,
+7, 0, 3, 6,
+0, 2, 3, 6,
+};
+
+int32 tetEdgeIds2[] = {
+0, 1,
+0, 2,
+1, 2,
+0, 3,
+2, 3,
+0, 4,
+0, 5,
+1, 5,
+4, 5,
+0, 6,
+1, 6,
+2, 6,
+3, 6,
+4, 6,
+5, 6,
+0, 7,
+3, 7,
+4, 7,
+6, 7,
+};
+
 ADeformableConstraintTestActor::FDeformableMeshPtr ADeformableConstraintTestActor::CreateDeformableMesh()
 {
 	FDeformableMesh::FTetModel TetModel;
-	TetModel.verts = TArray<float>(verts, sizeof(verts) / sizeof(float));
-	TetModel.tet_indics = TArray<int32>(tetIds, sizeof(tetIds) / sizeof(int32));
-	TetModel.tet_edge_indics = TArray<int32>(tetEdgeIds, sizeof(tetEdgeIds) / sizeof(int32));
-	TetModel.tet_surf_tri_indics = TArray<int32>(tetSurfaceTriIds, sizeof(tetSurfaceTriIds) / sizeof(int32));
+	TetModel.verts = TArray<float>(verts2, sizeof(verts2) / sizeof(float));
+	TetModel.tet_indics = TArray<int32>(tetIds2, sizeof(tetIds2) / sizeof(int32));
+	TetModel.tet_edge_indics = TArray<int32>(tetEdgeIds2, sizeof(tetEdgeIds2) / sizeof(int32));
+	TetModel.tet_surf_tri_indics = TArray<int32>(tetSurfaceTriIds2, sizeof(tetSurfaceTriIds2) / sizeof(int32));
 
 	FBox SimBox(TetWorldTransform.GetLocation() - SimulateBoxExtent * 0.5f, TetWorldTransform.GetLocation() + SimulateBoxExtent * 0.5f);
 
