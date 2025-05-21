@@ -109,7 +109,7 @@ public:
 		float &InLamada
 	)
 	{
-		// clamp damping, È·±£weighted_sum_of_gradients >> alpha_tilde(Ôİ¶¨²î2¸öÊıÁ¿¼¶)£¬·ÀÖ¹Ä£Äâ±¬Õ¨
+		// clamp damping, ç¡®ä¿weighted_sum_of_gradients >> alpha_tilde(æš‚å®šå·®2ä¸ªæ•°é‡çº§)ï¼Œé˜²æ­¢æ¨¡æ‹Ÿçˆ†ç‚¸
 		const auto dt = 1.0 / 60;
 		const auto max_dumping = (max_invmass * 2 * 1e-4) * dt * dt;
 		const auto dumping = FMath::Min(InDamping, max_dumping);
@@ -129,8 +129,8 @@ public:
 		
 		const auto weighted_sum_of_gradients = w0 + w1;
 		const auto alpha_tilde = dumping / (InDt * InDt);
-		// Ö»ÓĞweighted_sum_of_gradients >> alpha_tilde²Å²»»á³öÏÖÄ£Äâ±¬µô
-		// ±ÈÈçinvmassÔÚ100×óÓÒ dtÎª1/60=0.016£¬InDampingµÄÈ¡ÖµÎª100*dt*dt=0.0256
+		// åªæœ‰weighted_sum_of_gradients >> alpha_tildeæ‰ä¸ä¼šå‡ºç°æ¨¡æ‹Ÿçˆ†æ‰
+		// æ¯”å¦‚invmassåœ¨100å·¦å³ dtä¸º1/60=0.016ï¼ŒInDampingçš„å–å€¼ä¸º100*dt*dt=0.0256
 		const auto delta_lamada = - (C + alpha_tilde * InLamada) / (weighted_sum_of_gradients + alpha_tilde);
 
 		InLamada += delta_lamada;

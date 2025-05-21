@@ -115,17 +115,17 @@ void ASwingTwistConstraintTestActor::UpdateSwingTwistLimit(const FTransform& InB
 				}
 
 				if (i >= 1) {
-					// »æÖÆSwing°Ú¶¯Ô¼Êø¹ì¼£
+					// ç»˜åˆ¶Swingæ‘†åŠ¨çº¦æŸè½¨è¿¹
 					if(bDrawSwingPath)
 					{
 						DrawDebugLine(World, prevV, v, InColor);
 					}
-					// »æÖÆSwingÖáµÄÍÖÔ²
+					// ç»˜åˆ¶Swingè½´çš„æ¤­åœ†
 					if (bDrawLimitEllipse)
 					{
 						DrawDebugLine(World, prevV2, v2, FColor::Cyan);
 					}
-					// »æÖÆ°Ú¶¯×ËÌ¬µÄÍÖÔ²
+					// ç»˜åˆ¶æ‘†åŠ¨å§¿æ€çš„æ¤­åœ†
 					if (bDrawPoseEllipse)
 					{
 						DrawDebugLine(World, prevV3, v3, FColor::Orange);
@@ -217,17 +217,17 @@ void ASwingTwistConstraintTestActor::UpdateSwingPose(UPrimitiveComponent* InBody
 
 	FVector Center = Body1Trans.TransformPosition(mLocalSpacePosition1);
 
-	// »æÖÆtwistÖá
+	// ç»˜åˆ¶twistè½´
 	FVector S = NewBody2Trans.GetLocation();
 	FVector E = S + (ConstraintWorldPos - S).GetSafeNormal() * 500.0f;
 	DrawDebugLine(World, S, E, FColor::Yellow);
 
-	// »æÖÆĞı×ªÖá
+	// ç»˜åˆ¶æ—‹è½¬è½´
 	S = Center;
 	E = S + rotVec * SwingAngleRadius;
 	DrawDebugLine(World, S, E, FColor::Cyan);
 
-	// »æÖÆ×ËÌ¬Î»
+	// ç»˜åˆ¶å§¿æ€ä½
 	FVector v = X * SwingAngleRadius;
 	v = Center + rotQ.RotateVector(v);
 

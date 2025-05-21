@@ -57,7 +57,7 @@ void FJointSlovePair::InitPositionEffectiveMass(
 	const auto& ConstraintArm1 = ConstraintArms[ConstraintIndex][1];
 	const auto& _ConstraintAxis = this->ConstraintAxis[ConstraintIndex];
 
-	//¡¾½ğÉ½ÎÄµµ¡¿ Github PositionBasedDynamicsÔ´Âë·ÖÎö Section: Constraint mass matrix
+	//ã€é‡‘å±±æ–‡æ¡£ã€‘ Github PositionBasedDynamicsæºç åˆ†æ Section: Constraint mass matrix
 
 	// vector are column major
 	// II = (rxn)^T * InvI * (rxn)
@@ -133,7 +133,7 @@ void FJointSlovePair::ApplyAxisPositionConstraint(float Dt, int32 ConstraintInde
 
 void FJointSlovePair::InitPlanarPositionConstraint(float Dt, const int32 AxisIndex)
 {
-	// ÒªÓÃĞŞÕıºóµÄÎ»ÖÃ¼ÆËã£¬P+DP
+	// è¦ç”¨ä¿®æ­£åçš„ä½ç½®è®¡ç®—ï¼ŒP+DP
 	const auto& bX0 = CurrentPs[0];
 	const auto& cR0 = ConnectorRs[0];
 	const auto& cX0 = ConnectorXs[0];
@@ -610,7 +610,7 @@ void ASoftJointConstraintTestActor::AdvanceOneStep(float Dt)
 					|| VelDiff.Length() > 1000.0f 
 					|| NewState.DP.Length() > 2.0)
 				{
-					// ÖØĞÂÄ£Äâ
+					// é‡æ–°æ¨¡æ‹Ÿ
 					if (bEnableReset) bReset = true;
 				}
 
